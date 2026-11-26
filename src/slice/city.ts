@@ -1,6 +1,7 @@
 // Procedural district: every tower, sign and street is generated from a seed and an intent.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import type { DistrictKit, LotCtx } from './kits/kit';
 
 export const BLOCKS = 9;
 export const BLOCK = 64;
@@ -22,6 +23,11 @@ export interface BlockStyle {
   windows: number[]; // indexes into the window texture set
   lots?: 1 | 2 | 4; // force how the block is carved up
   slim?: number; // extra taper per setback, for needle towers
+  /** Builds each lot instead of the plain stacked tower (see kits/kit.ts). Must not depend on level. */
+  kit?: DistrictKit;
+  level?: number; // 1..4, passed through to the kit (default 1)
+  character?: Character; // passed through to the kit (default 'balanced')
+  cheap?: boolean; // kits build their lighter variant; default: true on a small screen
 }
 
 export const CYAN = 0x2ee6ff, MAGENTA = 0xff3d8b, AMBER = 0xffb347, VIOLET = 0xa06bff, GREEN = 0x4dffa6, ICE = 0xbfe9ff, ORANGE = 0xff7a3d;
@@ -55,7 +61,8 @@ export function mulberry(seed: number): () => number {
 
 // ---------- Textures (all drawn in code) ----------
 
-const COLS = 8, ROWS = 16, CELL = 3.6;
+/** The window textures are COLS x ROWS panes, and one pane is CELL metres square on a facade (so a floor is CELL tall). */
+export const COLS = 8, ROWS = 16, CELL = 3.6;
 
 function canvasTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const c = document.createElement('canvas');
@@ -243,7 +250,7 @@ export function createShared(): Shared {
 // ---------- Geometry helpers ----------
 
 /** A box whose side faces carry the window grid at a constant real-world window size. */
-function windowBox(w: number, h: number, d: number, cx: number, y0: number, cz: number, uo: number, vo: number): THREE.BufferGeometry {
+export function windowBox(w: number, h: number, d: number, cx: number, y0: number, cz: number, uo: number, vo: number): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d);
   const uv = g.attributes.uv as THREE.BufferAttribute;
   for (let f = 0; f < 6; f++) {
@@ -257,7 +264,8 @@ function windowBox(w: number, h: number, d: number, cx: number, y0: number, cz: 
   return g;
 }
 
-function colorBox(w: number, h: number, d: number, x: number, y: number, z: number, color: THREE.Color): THREE.BufferGeometry {
+/** A box centred on (x, y, z) with one vertex colour, for the vertex-colour materials (`shared.neon`, kits/core.ts). */
+export function colorBox(w: number, h: number, d: number, x: number, y: number, z: number, color: THREE.Color): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d);
   const n = g.attributes.position.count;
   const col = new Float32Array(n * 3);
@@ -267,7 +275,32 @@ function colorBox(w: number, h: number, d: number, x: number, y: number, z: numb
   return g;
 }
 
-interface Section { w: number; d: number; cx: number; cz: number; y0: number; h: number }
+/** An axis-aligned box standing on y0: footprint w x d centred on (cx, cz), h tall. */
+export interface Section { w: number; d: number; cx: number; cz: number; y0: number; h: number }
+
+/**
+ * The flickering blueprint shown before and while a structure rises: the edges of the given boxes,
+ * or of an object's bounding box. Each one owns its material (the animation fades it per structure);
+ * `disposeBlock` frees it.
+ */
+export function boxHolo(source: THREE.Object3D | readonly Section[], color = 0x2ee6ff): THREE.LineSegments {
+  let boxes: readonly Section[];
+  if (source instanceof THREE.Object3D) {
+    const b = new THREE.Box3().setFromObject(source);
+    if (b.isEmpty()) b.set(new THREE.Vector3(), new THREE.Vector3());
+    boxes = [{ w: b.max.x - b.min.x, d: b.max.z - b.min.z, cx: (b.min.x + b.max.x) / 2, cz: (b.min.z + b.max.z) / 2, y0: b.min.y, h: b.max.y - b.min.y }];
+  } else boxes = source;
+  const edges = boxes.map(s => {
+    const box = new THREE.BoxGeometry(s.w, s.h, s.d);
+    const e = new THREE.EdgesGeometry(box).translate(s.cx, s.y0 + s.h / 2, s.cz);
+    box.dispose();
+    return e;
+  });
+  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+  const holo = new THREE.LineSegments(mergeGeometries(edges), mat);
+  edges.forEach(e => e.dispose());
+  return holo;
+}
 
 export interface Structure {
   group: THREE.Group | null; // null for green space
@@ -295,6 +328,8 @@ export interface Block {
   decals: THREE.InstancedMesh;
   trees: THREE.InstancedMesh;
   treeBase: THREE.Matrix4[];
+  /** Clean-up that `disposeBlock` runs for things a kit made that are not in the scene graph or not per-block. */
+  extras?: (() => void)[];
 }
 
 export const blockCenter = (bx: number, bz: number) => ({ x: ORIGIN + (bx + 0.5) * PITCH, z: ORIGIN + (bz + 0.5) * PITCH });
@@ -364,6 +399,7 @@ function buildTower(sections: Section[], rng: () => number, shared: Shared, body
   return { group, holo, height };
 }
 
+const smallScreen = () => typeof innerWidth === 'number' && Math.min(innerWidth, innerHeight) < 600; // as `small` in stage.ts
 const scratch = new THREE.Matrix4();
 const maxDist = Math.hypot(MID, MID) * PITCH;
 
@@ -380,10 +416,11 @@ export function buildBlock(shared: Shared, bx: number, bz: number, seed: number,
   const treeColors: THREE.Color[] = [];
   const { x: cx, z: cz } = blockCenter(bx, bz);
   const inner = BLOCK - 8; // pavement all round
+  const extras: (() => void)[] = [];
 
   // Carve the block into 1, 2 or 4 lots.
   const roll = rng(), alongX = rng() < 0.5, split = 0.38 + rng() * 0.24;
-  const n = style.lots ?? (roll < 0.22 ? 1 : roll < 0.58 ? 2 : 4);
+  const n = style.lots ?? style.kit?.lots ?? (roll < 0.22 ? 1 : roll < 0.58 ? 2 : 4);
   const lots: [number, number, number, number][] = [];
   if (n === 1) lots.push([cx, cz, inner, inner]);
   else if (n === 2) {
@@ -395,7 +432,7 @@ export function buildBlock(shared: Shared, bx: number, bz: number, seed: number,
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) lots.push([cx + (sx * inner) / 4, cz + (sz * inner) / 4, h, h]);
   }
 
-  for (const [lx, lz, lw, ld] of lots) {
+  lots.forEach(([lx, lz, lw, ld], index) => {
     // Every random draw below happens for every lot, whatever the style, so layouts stay stable.
     const r = Array.from({ length: 8 }, rng);
     const lotRng = mulberry(Math.floor(r[7] * 1e9));
@@ -412,12 +449,28 @@ export function buildBlock(shared: Shared, bx: number, bz: number, seed: number,
         treeColors.push(new THREE.Color().setHSL(0.36 + lotRng() * 0.12, 0.85, 0.32 + lotRng() * 0.2));
       }
       structures.push({ ...base, group: null, holo: null, height: 8, color: new THREE.Color(GREEN), trees: [first, treeBase.length] });
-      continue;
+      return;
     }
     const fall = falloff ? 1.2 - 0.62 * (dist / maxDist) : 1;
     let H = (55 + r[2] * 130) * fall * style.height;
     if (r[3] < 0.08) H *= 1.55;
     H = Math.max(14, H);
+    const mat = shared.windows[style.windows[Math.floor(r[5] * style.windows.length)]];
+    if (style.kit) {
+      // The kit draws from its own generator, so a kit that declines (null) leaves the plain tower exactly as it was.
+      const ctx: LotCtx = {
+        shared, bx, bz, seed, index, count: n, x: lx, z: lz, w: lw, d: ld, H,
+        level: style.level ?? 1, character: style.character ?? 'balanced', style, accent, windowMat: mat,
+        r, rng: mulberry(Math.floor(r[7] * 1e9) ^ 0x5bd1e995), cheap: style.cheap ?? smallScreen(),
+      };
+      const built = style.kit.lot(ctx);
+      if (built) {
+        const holo = built.holo === undefined ? boxHolo(built.group) : built.holo;
+        if (built.dispose) extras.push(() => built.dispose!());
+        structures.push({ ...base, group: built.group, holo, height: built.height, color: accent, trees: [0, 0] });
+        return;
+      }
+    }
     const count = 1 + Math.floor(r[4] * 3.6);
     const sections: Section[] = [];
     let w = lw, d = ld, sx = lx, sz = lz, y0 = 0;
@@ -430,10 +483,9 @@ export function buildBlock(shared: Shared, bx: number, bz: number, seed: number,
       sx += (lotRng() - 0.5) * (w - nw); sz += (lotRng() - 0.5) * (d - nd);
       w = nw; d = nd;
     }
-    const mat = shared.windows[style.windows[Math.floor(r[5] * style.windows.length)]];
     const t = buildTower(sections, lotRng, shared, mat, accent, style.signs, false);
     structures.push({ ...base, ...t, color: accent, trees: [0, 0] });
-  }
+  });
 
   for (const s of structures) {
     if (s.group) { s.group.visible = false; root.add(s.group); }
@@ -457,15 +509,17 @@ export function buildBlock(shared: Shared, bx: number, bz: number, seed: number,
   trees.frustumCulled = false;
   root.add(trees);
 
-  return { bx, bz, root, structures, decals, trees, treeBase };
+  return { bx, bz, root, structures, decals, trees, treeBase, extras };
 }
 
 export function disposeBlock(block: Block): void {
   block.root.traverse(o => {
     const mesh = o as THREE.Mesh;
-    if (mesh.geometry) mesh.geometry.dispose();
-    if (o instanceof THREE.LineSegments) (o.material as THREE.Material).dispose();
+    // Kits share geometry and materials between blocks; those are marked and outlive the block.
+    if (mesh.geometry && !mesh.geometry.userData.shared) mesh.geometry.dispose();
+    if (o instanceof THREE.LineSegments && !(o.material as THREE.Material).userData.shared) (o.material as THREE.Material).dispose();
   });
+  block.extras?.forEach(f => f());
   (block.decals.material as THREE.Material).dispose();
   (block.trees.material as THREE.Material).dispose();
 }
@@ -494,7 +548,11 @@ const vec = new THREE.Vector3();
 export function animateStructure(block: Block | null, s: Structure, index: number, now: number): void {
   if (s.done) return;
   const plan = s.start - 1.6;
-  if (now < plan) return;
+  if (now < plan) {
+    // A tower that is growing taller stands at its old height while it waits its turn (it used to vanish until then).
+    if (s.from > 0 && s.p !== s.from) show(block, s, index, s.from);
+    return;
+  }
   if (now < s.start) {
     if (s.holo) {
       s.holo.visible = true;
