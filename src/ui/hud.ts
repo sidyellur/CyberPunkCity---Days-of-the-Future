@@ -171,7 +171,8 @@ export function panel(s: State, ui: UiState): string {
 export function startScreen(hasSave: boolean, difficulty: string): string {
   const diff = (k: string, label: string) => `<button data-act="difficulty" data-k="${k}" class="${difficulty === k ? 'on' : ''}">${label}</button>`;
   return `<div class="card">
-    <h1>NEON <span>ARCOLOGY</span></h1>
+    <h1>CYBERPUNK <span>CITY</span></h1>
+    <p class="sub-title">Days of the Future</p>
     <p class="tag-line">Raise a megacity. Outlast the ${RIVAL_NAME}.</p>
     <ul>
       <li>Build around your <b>Nexus Spire</b>: feed, house and power your citizens.</li>

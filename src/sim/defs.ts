@@ -9,7 +9,7 @@ export type ResKey = 'credits' | 'alloy' | 'food' | 'data';
 export type Res = Record<ResKey, number>;
 export type Cost = Partial<Res>;
 
-export const PLAYER_NAME = 'Your Arcology';
+export const PLAYER_NAME = 'Your City';
 export const RIVAL_NAME = 'Vanta Collective';
 
 /** City tiers, the equivalent of ages. Index 0 is tier 1. */
@@ -43,7 +43,7 @@ export interface BDef {
 
 export const BUILDINGS: Record<BKey, BDef> = {
   core: {
-    name: 'Nexus Spire', desc: 'Heart of the arcology. Lose it and the city falls.',
+    name: 'Nexus Spire', desc: 'Heart of your city. Lose it and the city falls.',
     size: 3, cost: {}, time: 0, hp: 3000, power: 12, workers: 0,
     out: { credits: 1, alloy: 0.4 }, housing: 8, tier: 1, attack: { dmg: 16, range: 5.5, cd: 0.7 }, prio: 0,
   },

@@ -1,5 +1,6 @@
 import { State } from './state';
 
+// Key predates the game's final name; kept so existing saves still load.
 const KEY = 'neon-arcology-save-v1';
 
 export function saveGame(s: State): boolean {

@@ -1,10 +1,10 @@
-# Neon Arcology
+# CyberPunk City: Days of the Future
 
 A cyberpunk city-builder and real-time strategy hybrid that runs in the browser. Raise a megacity
 around your Nexus Spire, keep its citizens fed, housed and powered, and bring down the rival
 Vanta Collective before its raids bring down you.
 
-Working title; single-player; no assets (all art is drawn in code).
+Single-player; no assets (all art is drawn in code).
 
 ## Play
 
@@ -13,7 +13,7 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
-`npm run single` builds one self-contained file, `dist/neon-arcology.html`, that can be opened or
+`npm run single` builds one self-contained file, `dist/cyberpunk-city.html`, that can be opened or
 hosted anywhere.
 
 ## How it plays
