@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createCity, step, brief, grow, clearSite, upgradeArchitect, recompute, adjacency, briefCost, CENTRE, DT, CityState, currentObjective,
+  createCity, step, brief, grow, clearSite, upgradeArchitect, recompute, damageDistrict, adjacency, briefCost, CENTRE, DT, CityState, currentObjective,
 } from '../src/city/model';
 import { advise, chooseSite } from '../src/city/architect';
 
@@ -81,6 +81,32 @@ describe('economy', () => {
     run(s, 30); run(copy, 30);
     expect(copy.res).toEqual(s.res);
     expect(copy.citizens).toBe(s.citizens);
+  });
+});
+
+describe('damage', () => {
+  it('cuts what a district provides and repairs over time', () => {
+    const s = createCity();
+    s.res = { credits: 99999, alloy: 99999, food: 99999, data: 0 };
+    brief(s, 31, 'farms', 'balanced');
+    run(s, 20);
+    const full = s.rates.income.food;
+    expect(damageDistrict(s, 31, 0.6)).toBeCloseTo(0.6);
+    expect(damageDistrict(s, 31, 0.6)).toBeCloseTo(0.4);
+    expect(damageDistrict(s, 30, 0.5)).toBe(0);
+    run(s, 1);
+    expect(s.rates.income.food).toBeLessThan(full * 0.2);
+    run(s, 260);
+    expect(s.districts[31]!.damage).toBe(0);
+    expect(s.rates.income.food).toBeGreaterThan(full * 0.9);
+  });
+  it('counts defence districts toward a protection rating', () => {
+    const s = createCity();
+    s.res = { credits: 99999, alloy: 99999, food: 99999, data: 0 };
+    s.architect = 2; s.citizens = 200;
+    expect(brief(s, 31, 'defence', 'balanced')).toBeNull();
+    run(s, 25);
+    expect(s.rates.defence).toBeCloseTo(10);
   });
 });
 

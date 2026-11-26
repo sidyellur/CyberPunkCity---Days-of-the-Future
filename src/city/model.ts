@@ -5,7 +5,7 @@ export const SIZE = 9; // blocks per side; the centre block is the Architect's p
 export const CENTRE = (SIZE * SIZE - 1) / 2;
 export const DT = 0.1;
 
-export type Intent = 'housing' | 'farms' | 'industry' | 'commerce' | 'power' | 'research' | 'park';
+export type Intent = 'housing' | 'farms' | 'industry' | 'commerce' | 'power' | 'research' | 'park' | 'defence';
 export type Character = 'efficient' | 'balanced' | 'green';
 export type ResKey = 'credits' | 'alloy' | 'food' | 'data';
 export type Res = Record<ResKey, number>;
@@ -22,6 +22,7 @@ export interface IntentDef {
   power: number; // positive generates, negative draws
   morale: number;
   unlock: number; // Architect level required
+  defence?: number; // protection rating at level 1, fully staffed
 }
 
 export const INTENTS: Record<Intent, IntentDef> = {
@@ -31,8 +32,10 @@ export const INTENTS: Record<Intent, IntentDef> = {
   commerce: { name: 'Commerce', desc: 'Markets and offices. Earns credits.', cost: { credits: 120, alloy: 100 }, time: 16, out: { credits: 3.5 }, jobs: 24, power: -4, morale: 0, unlock: 1 },
   power: { name: 'Power', desc: 'Reactor halls. Feeds the grid.', cost: { credits: 150, alloy: 120 }, time: 18, jobs: 10, power: 36, morale: 0, unlock: 1 },
   research: { name: 'Research', desc: 'Labs and data vaults. Produces data.', cost: { credits: 260, alloy: 200 }, time: 22, out: { data: 0.8 }, jobs: 18, power: -8, morale: 0, unlock: 2 },
+  defence: { name: 'Defence', desc: 'Drone bays and shield grids. Protects the city.', cost: { credits: 200, alloy: 220 }, time: 20, jobs: 20, power: -8, morale: 0, unlock: 2, defence: 10 },
   park: { name: 'Green space', desc: 'Open ground and trees. Lifts morale.', cost: { credits: 80, alloy: 40 }, time: 10, jobs: 0, power: -1, morale: 7, unlock: 1 },
 };
+/** Intents offered in the brief menu. Defence joins once the conflict layer is live. */
 export const INTENT_ORDER: Intent[] = ['housing', 'farms', 'industry', 'commerce', 'power', 'park', 'research'];
 
 export interface CharacterDef { name: string; desc: string; out: number; housing: number; jobs: number; draw: number; morale: number; cost: number }
@@ -50,6 +53,8 @@ export const ARCHITECT_UPS: { cost: Cost; time: number }[] = [
   { cost: { credits: 20000, alloy: 16000, data: 1200 }, time: 60 },
 ];
 export const levelMult = (level: number) => 1 + 0.75 * (level - 1);
+/** Damage repaired per second: a wrecked district is whole again in about four minutes. */
+export const REPAIR_RATE = 0.004;
 
 export interface District {
   intent: Intent;
@@ -61,6 +66,8 @@ export interface District {
   /** Level that is finished and in use; 0 while the first build is still rising. */
   standing: number;
   staffing: number;
+  /** 0 (intact) to 1 (wrecked). Damage cuts what the district provides and repairs over time. */
+  damage: number;
 }
 
 export interface Rates {
@@ -74,6 +81,7 @@ export interface Rates {
   employed: number;
   moraleTarget: number;
   starving: boolean;
+  defence: number;
 }
 
 export interface CityState {
@@ -100,7 +108,7 @@ export function createCity(seed = 1): CityState {
     districts: new Array<District | null>(SIZE * SIZE).fill(null),
     rates: {
       income: { credits: 0, alloy: 0, food: 0, data: 0 }, powerSupply: 0, powerDemand: 0, powerRatio: 1,
-      housing: 0, jobs: 0, workers: 0, employed: 0, moraleTarget: 60, starving: false,
+      housing: 0, jobs: 0, workers: 0, employed: 0, moraleTarget: 60, starving: false, defence: 0,
     },
     objectives: 0, events: [],
   };
@@ -151,6 +159,7 @@ export function districtStats(d: { intent: Intent; character: Character }, level
     jobs: Math.round(def.jobs * m * ch.jobs),
     power: def.power > 0 ? def.power * m * ch.out : def.power * (1 + 0.5 * (level - 1)) * ch.draw,
     morale: def.morale * (def.morale > 0 ? 1 + 0.5 * (level - 1) : 1) + ch.morale * (def.jobs > 0 || def.housing ? 1 : 0),
+    defence: (def.defence ?? 0) * m * ch.out,
   };
 }
 
@@ -178,14 +187,18 @@ export function adjacency(s: CityState, i: number, intent: Intent): { morale: nu
 }
 
 // Farms fill first, so a city that has collapsed can still feed itself back to health.
-const STAFF_ORDER: Intent[] = ['farms', 'power', 'industry', 'commerce', 'research'];
+const STAFF_ORDER: Intent[] = ['farms', 'power', 'defence', 'industry', 'commerce', 'research'];
 const SPIRE = { housing: 40, power: 24, credits: 2, alloy: 1.2 };
 
 /** Derive rates from the current districts. Safe to call at any time. */
 export function recompute(s: CityState): void {
   const r = s.rates;
   const live: { i: number; d: District; st: ReturnType<typeof districtStats> }[] = [];
-  s.districts.forEach((d, i) => { if (d && d.standing > 0) live.push({ i, d, st: districtStats(d, d.standing) }); });
+  s.districts.forEach((d, i) => {
+    if (!d) return;
+    d.damage ??= 0; // saves from before damage existed
+    if (d.standing > 0) live.push({ i, d, st: districtStats(d, d.standing) });
+  });
 
   // Staffing: 60% of citizens work; essential services fill first.
   r.workers = Math.floor(s.citizens * 0.6);
@@ -205,9 +218,12 @@ export function recompute(s: CityState): void {
 
   const archMult = 1 + 0.5 * (s.architect - 1);
   let supply = SPIRE.power * archMult, demand = 0, housing = SPIRE.housing * archMult;
+  r.defence = 0;
   for (const l of live) {
-    if (l.st.power > 0) supply += l.st.power * l.d.staffing; else demand -= l.st.power;
-    housing += l.st.housing;
+    const intact = 1 - l.d.damage;
+    if (l.st.power > 0) supply += l.st.power * l.d.staffing * intact; else demand -= l.st.power;
+    housing += l.st.housing * intact;
+    r.defence += l.st.defence * l.d.staffing * intact;
   }
   r.powerSupply = supply; r.powerDemand = demand;
   r.powerRatio = demand > 0 ? Math.min(1, supply / demand) : 1;
@@ -221,7 +237,7 @@ export function recompute(s: CityState): void {
     adj += a.morale;
     moraleTerms += l.st.morale;
     for (const k of Object.keys(l.st.out) as ResKey[]) {
-      inc[k] += (l.st.out[k] ?? 0) * l.d.staffing * (l.st.power < 0 ? r.powerRatio : 1) * moraleMult * a.outMult;
+      inc[k] += (l.st.out[k] ?? 0) * l.d.staffing * (l.st.power < 0 ? r.powerRatio : 1) * moraleMult * a.outMult * (1 - l.d.damage);
     }
   }
   inc.food -= s.citizens * 0.02;
@@ -255,7 +271,9 @@ export const currentObjective = (s: CityState) => OBJECTIVES.findIndex((_, i) =>
 export function step(s: CityState, dt: number = DT): void {
   s.time += dt;
   for (const d of s.districts) {
-    if (!d || d.build <= 0) continue;
+    if (!d) continue;
+    if (d.damage > 0) d.damage = Math.max(0, d.damage - REPAIR_RATE * dt);
+    if (d.build <= 0) continue;
     d.build = Math.max(0, d.build - dt);
     if (d.build === 0) {
       d.standing = d.level;
@@ -291,7 +309,7 @@ export function brief(s: CityState, i: number, intent: Intent, character: Charac
   if (!canAfford(s, cost)) return 'Not enough resources';
   pay(s, cost);
   const t = briefTime(intent, 1);
-  s.districts[i] = { intent, character, level: 1, build: t, buildTotal: t, standing: 0, staffing: 0 };
+  s.districts[i] = { intent, character, level: 1, build: t, buildTotal: t, standing: 0, staffing: 0, damage: 0 };
   return null;
 }
 
@@ -317,6 +335,15 @@ export function clearSite(s: CityState, i: number): string | null {
   s.districts[i] = null;
   recompute(s);
   return null;
+}
+
+/** Damage a district (from an attack, sabotage or disaster). Returns the damage actually dealt. */
+export function damageDistrict(s: CityState, i: number, amount: number): number {
+  const d = s.districts[i];
+  if (!d || d.standing === 0 || amount <= 0) return 0;
+  const before = d.damage;
+  d.damage = Math.min(1, d.damage + amount);
+  return d.damage - before;
 }
 
 export function upgradeArchitect(s: CityState): string | null {

@@ -32,8 +32,9 @@ const LOOK: Record<Intent, BlockStyle> = {
   power: { height: 0.6, park: 0, signs: 0, palette: [ICE, CYAN], windows: [6], lots: 1 },
   research: { height: 1.5, park: 0, signs: 0.2, palette: [VIOLET, CYAN], windows: [3, 1], slim: 0.1 },
   park: { height: 0.3, park: 1, signs: 0, palette: [GREEN], windows: [0] },
+  defence: { height: 0.5, park: 0, signs: 0, palette: [0xff5a4d, ICE], windows: [5, 1], lots: 2 },
 };
-const INTENT_COLOR: Record<Intent, number> = { housing: AMBER, farms: GREEN, industry: ORANGE, commerce: MAGENTA, power: ICE, research: VIOLET, park: 0x7dffb8 };
+const INTENT_COLOR: Record<Intent, number> = { housing: AMBER, farms: GREEN, industry: ORANGE, commerce: MAGENTA, power: ICE, research: VIOLET, park: 0x7dffb8, defence: 0xff5a4d };
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
 
 function styleFor(intent: Intent, character: Character, level: number): BlockStyle {
