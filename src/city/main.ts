@@ -17,6 +17,7 @@ import {
   buildBlock, buildSpire, disposeBlock, animateStructure, blockCenter,
 } from '../slice/city';
 import { createStage } from '../slice/stage';
+import { kitFor } from '../slice/kits';
 
 const $ = (id: string) => document.getElementById(id)!;
 const SAVE_KEY = 'cyberpunk-city-layer1-v1';
@@ -49,6 +50,8 @@ function styleFor(intent: Intent, character: Character, level: number): BlockSty
     ...base,
     height: base.height * 0.45 * ch * (1 + 0.55 * (level - 1)),
     park: Math.min(1, base.park + (character === 'green' && intent !== 'park' ? 0.25 : 0)),
+    // A district kit, where one exists for this kind of district, replaces the plain towers.
+    kit: kitFor(intent, character), level, character,
   };
 }
 

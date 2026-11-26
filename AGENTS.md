@@ -39,6 +39,17 @@ it relies on exactly this from the visuals side:
   The shell maps each district intent to a style in `LOOK` in `src/city/main.ts`. New style fields
   are welcome if they are optional.
 
+### District kits
+
+Richer buildings plug in per kind of district, without touching the generator. A kit is one file,
+`src/slice/kits/<name>.kit.ts`, default-exporting a `RegisteredKit` (see `src/slice/kits/index.ts`);
+the game finds it through `kitFor(intent, character)` in `styleFor` (`src/city/main.ts`). The rules
+a kit must follow are at the top of `src/slice/kits/kit.ts`, and `tests/kits.test.ts` checks every
+registered kit: at most 3 meshes per lot, shared materials only, no lights, deterministic, and
+designed from the roof down so a level-up does not change the visible top. Preview a kit at
+`kits.html?kit=<id>&intent=<intent>&level=1..4&grow=1`; `node scripts/kitshots.mjs <dir> <id> <baseUrl> <intent>`
+saves screenshots and prints draw calls and triangles.
+
 Anything behind those names is free to change: geometry, materials, lighting, post-processing,
 weather, street life, level of detail.
 
