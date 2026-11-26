@@ -3,10 +3,12 @@ import './game.css';
 import * as THREE from 'three';
 import {
   CityState, Intent, Character, Cost, ResKey, SIZE, CENTRE, DT, INTENTS, INTENT_ORDER, CHARACTERS, CHARACTER_ORDER, MAX_LEVEL,
-  ARCHITECT_UPS, OBJECTIVES, createCity, step, recompute, brief, grow, clearSite, upgradeArchitect, briefCost, briefTime,
+  ARCHITECT_UPS, OBJECTIVES, PolicyKey, createCity, recompute, brief, grow, clearSite, upgradeArchitect, briefCost, briefTime,
   districtStats, adjacency, canAfford, currentObjective,
 } from './model';
 import { advise, Advice } from './architect';
+import { tick, setPolicy, setAutonomy, decide } from './governance';
+import { governHtml, pendingHtml } from './govhud';
 import {
   Block, BlockStyle, Structure, BLOCK, PITCH, ORIGIN, AMBER, MAGENTA, CYAN, VIOLET, GREEN, ICE, ORANGE,
   buildBlock, buildSpire, disposeBlock, animateStructure, blockCenter,
@@ -69,6 +71,7 @@ function boot(st: NonNullable<typeof stage>): void {
   let hover = -1;
   let draft: { intent: Intent; character: Character } = { intent: 'housing', character: 'balanced' };
   let confirmClear = false;
+  let governing = false;
   let advice: Advice = advise(state);
 
   // ---------- 3D districts ----------
@@ -226,7 +229,8 @@ function boot(st: NonNullable<typeof stage>): void {
       <div class="chip ${r.powerRatio < 1 ? 'bad' : ''}" title="Power: supply / demand"><b>PWR</b><span>${Math.floor(r.powerSupply)}/${Math.ceil(r.powerDemand)}</span></div>
       <div class="chip ${state.citizens >= r.housing ? 'warn' : ''}" title="Citizens / homes"><b>POP</b><span>${fmt(state.citizens)}/${fmt(r.housing)}</span></div>
       <div class="chip" title="Workers employed / workforce"><b>JOBS</b><span>${fmt(r.employed)}/${fmt(r.workers)}</span></div>
-      <div class="chip ${state.morale < 35 ? 'bad' : ''}" title="Morale drives output and growth"><b>MOR</b><span>${Math.round(state.morale)}%</span></div>`;
+      <div class="chip ${state.morale < 35 ? 'bad' : ''}" title="Morale drives output and growth"><b>MOR</b><span>${Math.round(state.morale)}%</span></div>
+      <div class="chip ${state.gov.trust < 30 ? 'bad' : ''}" title="Trust in the Architect, and in you"><b>TRUST</b><span>${Math.round(state.gov.trust)}</span></div>`;
   }
 
   function architectHtml(): string {
@@ -240,7 +244,7 @@ function boot(st: NonNullable<typeof stage>): void {
         ${a.affordable ? '' : `<div class="need">${shortfall(a.cost!)}</div>`}
         <div class="btns"><button data-act="approve" class="primary ${a.affordable ? '' : 'off'}">Approve</button><button data-act="show">Show me</button></div></div>`;
     }
-    return `<div class="who">ARCHITECT <span>Level ${state.architect}</span></div><p class="says">${a.reason}</p>${proposal}${objective}`;
+    return `<div class="who">ARCHITECT <span>Level ${state.architect}</span></div>${pendingHtml(state)}<p class="says">${a.reason}</p>${proposal}${objective}`;
   }
 
   function statLines(intent: Intent, character: Character, level: number): string[] {
@@ -316,7 +320,7 @@ function boot(st: NonNullable<typeof stage>): void {
     $(id).innerHTML = html;
     $(id).classList.toggle('empty', !html);
   }
-  let hudT = 0;
+  let hudT = 0, govT = 0;
   function render(force = false): void {
     if (!force && performance.now() - hudT < 250) return;
     hudT = performance.now();
@@ -324,7 +328,10 @@ function boot(st: NonNullable<typeof stage>): void {
     if (!running) return;
     setHtml('chips', topHtml());
     setHtml('architect', architectHtml());
-    setHtml('site', siteHtml());
+    // The Govern panel is full of slowly drifting numbers; redraw it once a second so its buttons hold still.
+    if (!governing) setHtml('site', siteHtml());
+    else if (force || performance.now() - govT > 1000) { govT = performance.now(); setHtml('site', governHtml(state)); }
+    $('govern').classList.toggle('on', governing);
     $('pause').textContent = paused ? '▶' : '❚❚';
     $('pause').classList.toggle('on', paused);
     $('speed').textContent = `${speed}×`;
@@ -342,7 +349,8 @@ function boot(st: NonNullable<typeof stage>): void {
         <ul><li><b>Brief the Architect.</b> Pick an empty lot, say what should stand there, and watch it rise.</li>
         <li><b>Or approve its proposals.</b> The Architect reads the city and tells you what it would do next.</li>
         <li><b>Mind the neighbours.</b> Homes beside industry are miserable. Homes beside green space are not.</li>
-        <li><b>Build upward.</b> Upgrade the Architect, then grow districts taller.</li></ul>
+        <li><b>Build upward.</b> Upgrade the Architect, then grow districts taller.</li>
+        <li><b>Govern.</b> Set policy, answer the city's crises, and decide how much the Architect may do without asking. More autonomy is faster. People trust it less.</li></ul>
         <div class="btns">${hasSave ? '<button data-act="continue" class="primary">Continue your city</button><button data-act="new">Found a new city</button>' : '<button data-act="new" class="primary">Found your city</button>'}</div></div>`;
     } else if (overlay === 'menu') {
       el.innerHTML = `<div class="card"><h1>PAUSED</h1><div class="btns col"><button data-act="resume" class="primary">Resume</button>
@@ -368,7 +376,7 @@ function boot(st: NonNullable<typeof stage>): void {
     raised.clear();
     state = s;
     recompute(state);
-    running = true; paused = false; overlay = null; selected = -1; confirmClear = false;
+    running = true; paused = false; overlay = null; selected = -1; confirmClear = false; governing = false;
     sync(true);
     advice = advise(state);
     overlayHtml();
@@ -400,6 +408,10 @@ function boot(st: NonNullable<typeof stage>): void {
         else { confirmClear = false; attempt(clearSite(state, selected)); }
         break;
       case 'close': selected = -1; break;
+      case 'govern': governing = !governing; if (governing) selected = -1; break;
+      case 'policy': { const err = setPolicy(state, k as PolicyKey, Number(el.dataset.o)); if (err) toast(err, 'warn'); break; }
+      case 'autonomy': setAutonomy(state, Number(el.dataset.o)); break;
+      case 'decide': { const err = decide(state, Number(el.dataset.o) as 0 | 1); if (err) toast(err, 'warn'); else sync(); break; }
       case 'resume': overlay = null; overlayHtml(); break;
       case 'rain': st.rain.visible = !st.rain.visible; overlayHtml(); break;
       case 'new': try { localStorage.removeItem(SAVE_KEY); } catch { /* storage unavailable */ } start(createCity(1 + Math.floor(Math.random() * 9999))); break;
@@ -428,6 +440,7 @@ function boot(st: NonNullable<typeof stage>): void {
   $('view').addEventListener('click', () => st.setView(!st.walking));
   $('glow').addEventListener('click', () => { st.glow = !st.glow; render(true); });
   $('menu').addEventListener('click', () => { overlay = 'menu'; overlayHtml(); });
+  $('govern').addEventListener('click', () => { governing = !governing; if (governing) selected = -1; render(true); });
 
   let hintTimer = 0;
   function hint(): void {
@@ -440,7 +453,7 @@ function boot(st: NonNullable<typeof stage>): void {
   }
   st.onView = street => {
     ($('walk-hold') as HTMLElement).hidden = !(street && st.touch);
-    if (street) selected = -1;
+    if (street) { selected = -1; governing = false; }
     for (const [, r] of raised) r.label.visible = !street;
     lotLines.visible = !street;
     hint();
@@ -465,6 +478,7 @@ function boot(st: NonNullable<typeof stage>): void {
     const i = siteAt(e.clientX, e.clientY);
     confirmClear = false;
     selected = i;
+    if (i >= 0) governing = false;
     if (i >= 0 && !state.districts[i] && advice.kind === 'brief' && advice.site === i) draft = { intent: advice.intent!, character: advice.character! };
     render(true);
   });
@@ -483,7 +497,7 @@ function boot(st: NonNullable<typeof stage>): void {
     if (running && !overlay && !paused) {
       acc += dt * speed;
       let n = 0;
-      while (acc >= DT && n++ < 8) { step(state); acc -= DT; }
+      while (acc >= DT && n++ < 8) { tick(state); acc -= DT; }
       if (acc > DT) acc = 0;
       sync();
       saveT += dt; adviceT += dt;
@@ -519,7 +533,7 @@ function boot(st: NonNullable<typeof stage>): void {
   (window as unknown as Record<string, unknown>).__city = {
     get state() { return state; },
     start: (seed = 1) => start(createCity(seed)),
-    run: (seconds: number) => { for (let i = 0; i < seconds / DT; i++) step(state); sync(); advice = advise(state); render(true); },
+    run: (seconds: number) => { for (let i = 0; i < seconds / DT; i++) tick(state); sync(); advice = advise(state); render(true); },
     approve: () => { const el = document.createElement('i'); el.dataset.act = 'approve'; act(el); },
     select: (i: number) => { selected = i; render(true); },
     screen: (i: number) => { const c = blockCenter(i % SIZE, Math.floor(i / SIZE)); const v = new THREE.Vector3(c.x, 0, c.z).project(camera); const r = st.canvas.getBoundingClientRect(); return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height }; },

@@ -106,6 +106,33 @@ button.x { padding: 3px 8px; }
 .bar { height: 4px; background: rgba(255, 255, 255, 0.1); margin: 4px 0; }
 .bar > div { height: 100%; background: var(--amber); }
 
+/* Governance */
+.decision { padding: 9px 10px; margin: 8px 0; border: 1px solid var(--cyan); background: rgba(46, 230, 255, 0.07); }
+.decision.troubling { border-color: var(--pink); background: rgba(255, 61, 139, 0.08); }
+.decision.event { border-color: var(--amber); background: rgba(255, 179, 71, 0.07); }
+.decision .tag { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); }
+.decision .what { font-weight: 700; font-size: 14px; margin-top: 2px; }
+.decision p { margin: 5px 0; font-size: 12px; }
+.decision .pitch { font-style: italic; }
+.decision .detail { color: var(--dim); }
+.decision .choice { margin-top: 7px; }
+.decision .choice button { width: 100%; }
+.decision small { display: block; font-size: 11px; color: var(--dim); margin-top: 2px; }
+.bar.timer { margin-top: 8px; height: 3px; }
+.bar.bad > div, i.bad { background: var(--bad); }
+.bar.low > div { background: var(--amber); }
+.bar.ok > div { background: var(--cyan); }
+.bar.good > div { background: #4dffa6; }
+.row { display: flex; align-items: baseline; gap: 8px; }
+.row span { flex: 1; font-size: 11px; color: var(--dim); }
+.row i { font-style: normal; font-weight: 700; font-variant-numeric: tabular-nums; background: none !important; }
+.row i.bad { color: var(--bad); } .row i.low { color: var(--amber); } .row i.ok { color: var(--cyan); } .row i.good { color: #4dffa6; }
+.group { margin-top: 6px; }
+.seg.four button { padding: 8px 4px; font-size: 11px; }
+.note i { font-style: normal; color: var(--amber); }
+.alert { padding: 6px 9px; border: 1px solid var(--bad); color: #ffb0b0; background: rgba(255, 107, 107, 0.1); }
+.enacted { margin: 0; padding-left: 16px; font-size: 12px; color: var(--dim); }
+
 #hint { align-self: center; margin: 8px 0 calc(10px + env(safe-area-inset-bottom, 0px)); padding: 5px 12px; color: var(--dim); background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.08); font-size: 12px; text-align: center; max-width: calc(100% - 24px); transition: opacity 0.6s; }
 #hint:empty { display: none; }
 #hint.fade { opacity: 0; }

@@ -14,6 +14,8 @@ async function open(name, viewport, touch = false) {
   await page.waitForFunction(() => window.__city, null, { timeout: 60000 });
   return page;
 }
+// Panels redraw as numbers drift; the game acts on press, so send the press directly.
+const press = (page, sel) => page.dispatchEvent(sel, 'pointerdown');
 const shot = async (page, name) => { await page.waitForTimeout(1500); await page.screenshot({ path: `${out}/city-${name}.png` }); };
 const summary = page => page.evaluate(() => { const s = window.__city.state; return { t: Math.round(s.time), citizens: Math.round(s.citizens), districts: s.districts.filter(d => d).length, architect: s.architect, morale: Math.round(s.morale), objective: s.objectives.toString(2) }; });
 
@@ -39,6 +41,18 @@ await page.evaluate(() => { const s = window.__city.stage; s.camera.position.set
 await shot(page, '5-city');
 const before = await summary(page);
 console.log('later', JSON.stringify(before));
+// Govern: open the panel, change a policy and the autonomy level, then answer a decision.
+await page.click('#govern');
+await press(page, '[data-act="policy"][data-k="wealth"][data-o="2"]');
+await press(page, '[data-act="autonomy"][data-o="2"]');
+await page.evaluate(() => { window.__city.state.gov.pending = { id: 'automation', kind: 'initiative', t: 40, total: 50, site: -1 }; window.__city.run(0.2); });
+await shot(page, '9-govern');
+await press(page, '[data-act="decide"][data-o="1"]');
+await page.evaluate(() => { window.__city.state.gov.pending = { id: 'blackout', kind: 'event', t: 55, total: 60, site: -1 }; window.__city.run(0.2); });
+await shot(page, '10-event');
+await press(page, '[data-act="decide"][data-o="0"]');
+console.log('governed', JSON.stringify(await page.evaluate(() => { const g = window.__city.state.gov; return { autonomy: g.autonomy, wealth: g.policies.wealth, refused: g.refused, boosts: g.boosts.map(b => b.id), trust: Math.round(g.trust), pending: g.pending }; })));
+await page.click('#govern');
 await page.click('#view');
 await shot(page, '6-street');
 // Save, reload, continue.

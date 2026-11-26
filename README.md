@@ -5,7 +5,8 @@ what the city needs; a superintelligence, the Architect, designs it and raises i
 browser, in 3D, with every tower, sign and street generated in code (no art assets).
 
 The plan is four layers, tracked as issues: building (#1), administration (#2), conflict (#3) and
-eras (#4). **Layer 1, building, is what is playable today.**
+eras (#4). **Layers 1 and 2, building and administration, are playable today.** The Layer 3 rules
+engine exists (`src/city/conflict.ts` on the `layer-3-conflict-engine` branch) but is not wired into the game yet.
 
 ## Play
 
@@ -16,7 +17,7 @@ npm run dev        # http://localhost:5173
 
 `npm run single` builds self-contained single files in `dist/` that can be opened or hosted anywhere.
 
-## How it plays (Layer 1)
+## How it plays
 
 - **Brief the Architect.** Pick an empty lot, choose what should stand there (housing, vertical
   farms, industry, commerce, power, green space, research) and its character (dense, balanced,
@@ -30,7 +31,15 @@ npm run dev        # http://localhost:5173
 - **Build upward.** Upgrade the Architect to grow districts to higher levels; towers get taller.
 - **Walk it.** The Street button drops you to eye level between the towers.
 
-There is no fighting or failure state in this layer yet; that arrives with layers 2 and 3.
+- **Govern.** Three groups of citizens (Labour, Enterprise, Commons) want different things. Four
+  policies (wealth, oversight, housing, working hours) each please some and anger others. Unhappy
+  groups strike.
+- **Decide how much to trust the AI.** The autonomy dial runs from Advisory (nothing happens without
+  you) to Sovereign (the Architect runs the city, policy included). More autonomy is faster; people
+  trust it less. The Architect also proposes initiatives, some of them efficient and troubling, and
+  the city throws up crises with two real choices.
+
+There is no fighting or way to lose yet; that arrives with Layer 3.
 
 ## Pages
 
@@ -44,6 +53,8 @@ There is no fighting or failure state in this layer yet; that arrives with layer
 
 - `src/city/model.ts`: the city simulation. Pure, DOM-free, plain-JSON state. Balance numbers live here.
 - `src/city/architect.ts`: the Architect's rules for what to propose and where.
+- `src/city/governance.ts`: Layer 2 rules: groups, policies, trust, autonomy, initiatives, events.
+  It writes `state.mods`, which the model reads. `src/city/govhud.ts` is its HUD markup.
 - `src/city/main.ts`: game shell: brief flow, HUD, keeping the 3D city in step with the simulation.
 - `src/slice/city.ts`: generates a city block from a seed and a style. The same seed gives the same
   lots, so growing a district makes its existing towers taller.
@@ -55,5 +66,5 @@ There is no fighting or failure state in this layer yet; that arrives with layer
 
 ## Not built yet
 
-Policy, citizens with opinions and the autonomy dial (#2); rivals, doctrine and conflict (#3); eras
+Wiring conflict into the game (#3); eras
 and megaprojects (#4); sound; richer building shapes and street life.
