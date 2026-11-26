@@ -9,7 +9,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import {
   BLOCKS, BLOCK, PITCH, ORIGIN, EXTENT, GROUND_TILES, INTENTS, IntentKey, District, Structure,
   createShared, generateDistrict, lampSpots, mulberry,
-} from './city';
+} from './district07';
 import { STREET_CORNER } from './street';
 import { createTransit } from './transit';
 import { createRetrofit } from './retrofit';

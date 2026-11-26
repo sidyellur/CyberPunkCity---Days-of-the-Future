@@ -2,7 +2,7 @@
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const out = process.argv[2] ?? '.';
-const url = process.argv[3] ?? 'http://localhost:4179/';
+const url = process.argv[3] ?? 'http://localhost:4179/classic.html';
 const browser = await chromium.launch();
 const errors = [];
 

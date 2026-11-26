@@ -1,17 +1,6 @@
-import { createExchangeFrontage, type ExchangeBuilding } from './exchangeFrontage';
 // Procedural district: every tower, sign and street is generated from a seed and an intent.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { createStreetCorner, STREET_CORNER } from './street';
-import { DistrictProfile, PROFILES, profileAt, profileHeight, profileLots } from './districtProfiles';
-import { CANAL_COLUMN } from './canal';
-import { createArcology } from './arcology';
-import { createSkyHarbor } from './skyHarbor';
-import { createFilterGardens } from './filterGardens';
-import { createTerraceBlock } from './terraceBlocks';
-import { createNexus } from './nexus';
-
-export type { DistrictProfile } from './districtProfiles';
 
 export const BLOCKS = 9;
 export const BLOCK = 64;
@@ -21,30 +10,35 @@ export const EXTENT = BLOCKS * PITCH;
 export const ORIGIN = -EXTENT / 2;
 export const GROUND_TILES = 78;
 
-export type IntentKey = 'efficient' | 'balanced' | 'green';
-export interface Intent {
-  label: string;
-  blurb: string;
+export type Character = 'efficient' | 'balanced' | 'green';
+export type IntentKey = Character; // the slice's three briefs are the three characters
+
+/** How the Architect dresses a block. Game intents and slice characters both reduce to one of these. */
+export interface BlockStyle {
   height: number;
-  park: number;
+  park: number; // chance that a lot becomes green space
   signs: number;
   palette: number[];
+  windows: number[]; // indexes into the window texture set
+  lots?: 1 | 2 | 4; // force how the block is carved up
+  slim?: number; // extra taper per setback, for needle towers
 }
 
-const CYAN = 0x2ee6ff, MAGENTA = 0xff3d8b, AMBER = 0xffb347, VIOLET = 0xa06bff, GREEN = 0x4dffa6, ICE = 0xbfe9ff;
+export const CYAN = 0x2ee6ff, MAGENTA = 0xff3d8b, AMBER = 0xffb347, VIOLET = 0xa06bff, GREEN = 0x4dffa6, ICE = 0xbfe9ff, ORANGE = 0xff7a3d;
 
-export const INTENTS: Record<IntentKey, Intent> = {
+export interface CharacterDef { label: string; blurb: string; style: BlockStyle }
+export const INTENTS: Record<Character, CharacterDef> = {
   efficient: {
     label: 'Dense', blurb: 'Maximum floor area. Taller, tighter, colder.',
-    height: 1.3, park: 0, signs: 0.75, palette: [CYAN, ICE, AMBER, CYAN],
+    style: { height: 1.3, park: 0, signs: 0.75, palette: [CYAN, ICE, AMBER, CYAN], windows: [1, 1, 3, 0] },
   },
   balanced: {
     label: 'Balanced', blurb: 'Commerce, housing and light in equal measure.',
-    height: 1, park: 0.07, signs: 1, palette: [CYAN, MAGENTA, AMBER, VIOLET],
+    style: { height: 1, park: 0.07, signs: 1, palette: [CYAN, MAGENTA, AMBER, VIOLET], windows: [0, 1, 2, 3] },
   },
   green: {
     label: 'Green', blurb: 'Lower skyline, open ground, room to breathe.',
-    height: 0.68, park: 0.3, signs: 0.5, palette: [GREEN, CYAN, AMBER, GREEN],
+    style: { height: 0.68, park: 0.3, signs: 0.5, palette: [GREEN, CYAN, AMBER, GREEN], windows: [0, 0, 1, 3] },
   },
 };
 
@@ -96,130 +90,6 @@ function windowTexture(rng: () => number, hues: string[], lit: number): THREE.Ca
   });
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
-}
-
-function frontageMaterial(residential: boolean): THREE.MeshStandardMaterial {
-  const rng = mulberry(residential ? 2250 : 2251);
-  const map = canvasTexture(256, 512, g => {
-    g.fillStyle = residential ? '#686260' : '#293940';
-    g.fillRect(0, 0, 256, 512);
-    for (let i = 0; i < 9200; i++) {
-      g.fillStyle = i % 2 ? '#22212923' : '#b9bdc417';
-      g.fillRect(rng() * 256, rng() * 512, 1 + rng() * 3, 1 + rng() * 5);
-    }
-  });
-  const emissiveMap = canvasTexture(256, 512, g => {
-    g.fillStyle = '#000';
-    g.fillRect(0, 0, 256, 512);
-  });
-  const body = map.image.getContext('2d') as CanvasRenderingContext2D;
-  const lit = emissiveMap.image.getContext('2d') as CanvasRenderingContext2D;
-  for (let floor = 0; floor < ROWS; floor++) {
-    const y = floor * 32;
-    body.fillStyle = residential ? '#514b47' : '#1a282f';
-    body.fillRect(0, y, 256, 2);
-    for (let column = 0; column < COLS; column++) {
-      const x = column * 32;
-      const width = residential ? (column % 4 === 2 ? 10 : 17) : 26;
-      const wx = x + (32 - width) / 2;
-      const wy = y + (residential ? 6 : 4);
-      const height = residential ? 18 : 24;
-      body.fillStyle = residential ? '#827970' : '#40555b';
-      body.fillRect(wx - 2, wy - 2, width + 4, height + 4);
-      body.fillStyle = '#10191e';
-      body.fillRect(wx, wy, width, height);
-      if (rng() < (residential ? 0.33 : 0.48)) {
-        lit.fillStyle = residential ? (rng() > 0.24 ? '#e59b54' : '#b3bbcc') : '#8bc4bf';
-        lit.fillRect(wx + 1, wy + 1, width - 2, height - 2);
-        lit.clearRect(wx + (width >> 1), wy + 1, 1, height - 2);
-        if (residential) {
-          lit.fillStyle = '#3e302c';
-          lit.fillRect(wx + 1, wy + 2, width - 2, 2 + rng() * 11);
-        }
-      }
-    }
-  }
-  for (const t of [map, emissiveMap]) t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  return new THREE.MeshStandardMaterial({
-    map, emissiveMap, emissive: 0xffffff, emissiveIntensity: residential ? 0.74 : 0.58,
-    roughness: residential ? 0.86 : 0.39, metalness: residential ? 0.04 : 0.42,
-  });
-}
-
-const DISTRICT_SURFACES: Record<DistrictProfile, {
-  body: [string, string]; frame: string; window: string; glow: [string, string];
-  lit: number; roughness: number; metalness: number;
-}> = {
-  transit: { body: ['#466073', '#384f62'], frame: '#658095', window: '#172b3b', glow: ['#94c2bf', '#739bb4'], lit: 0.39, roughness: 0.36, metalness: 0.36 },
-  market: { body: ['#776255', '#705055'], frame: '#988279', window: '#2a1d22', glow: ['#eeac72', '#e89991'], lit: 0.43, roughness: 0.88, metalness: 0.03 },
-  industrial: { body: ['#626765', '#5a5350'], frame: '#777d73', window: '#303530', glow: ['#e7b17c', '#a3b29f'], lit: 0.29, roughness: 0.75, metalness: 0.24 },
-  residential: { body: ['#616f6a', '#67655c'], frame: '#809080', window: '#242f30', glow: ['#e2be85', '#91b8af'], lit: 0.35, roughness: 0.83, metalness: 0.09 },
-};
-
-function districtMaterial(profile: DistrictProfile, variant: 0 | 1): THREE.MeshStandardMaterial {
-  const surface = DISTRICT_SURFACES[profile];
-  const rng = mulberry(77 * profile.length + variant * 419);
-  const map = canvasTexture(256, 512, g => {
-    g.fillStyle = surface.body[variant];
-    g.fillRect(0, 0, 256, 512);
-    for (let i = 0; i < 1300; i++) {
-      g.fillStyle = i % 2 ? '#10141a25' : '#ccd7d41a';
-      g.fillRect(rng() * 256, rng() * 512, 1 + rng() * 2, 2 + rng() * 6);
-    }
-  });
-  const emissiveMap = canvasTexture(256, 512, g => {
-    g.fillStyle = '#000';
-    g.fillRect(0, 0, 256, 512);
-  });
-  const body = map.image.getContext('2d') as CanvasRenderingContext2D;
-  const lights = emissiveMap.image.getContext('2d') as CanvasRenderingContext2D;
-  for (let row = 0; row < ROWS; row++) {
-    const y = row * 32;
-    body.fillStyle = surface.frame;
-    body.fillRect(0, y, 256, profile === 'residential' ? 3 : 1);
-    for (let column = 0; column < COLS; column++) {
-      const x = column * 32;
-      if (profile === 'industrial') {
-        for (let rib = 1; rib < 32; rib += 5) body.fillRect(x + rib, y + 1, 1, 31);
-        if (row % 3 !== 1) continue;
-      }
-      const transit = profile === 'transit';
-      const industrial = profile === 'industrial';
-      const residential = profile === 'residential';
-      const width = transit ? 30 : industrial ? 25 : residential ? 21 : 13;
-      const height = transit ? 22 : industrial ? 8 : residential ? 18 : 21;
-      const wx = x + Math.floor((32 - width) / 2);
-      const wy = y + (industrial ? 6 : 5);
-      body.fillStyle = surface.frame;
-      body.fillRect(wx - 1, wy - 1, width + 2, height + 2);
-      body.fillStyle = surface.window;
-      body.fillRect(wx, wy, width, height);
-      if (rng() < surface.lit) {
-        lights.fillStyle = surface.glow[rng() < 0.81 ? variant : 1 - variant];
-        lights.globalAlpha = 0.18 + rng() ** 1.6 * 0.76;
-        lights.fillRect(wx + 1, wy + 1, width - 2, height - 2);
-        lights.globalAlpha = 1;
-      }
-      if (transit || industrial || residential) {
-        const bar = wx + Math.floor(width / 2);
-        body.fillStyle = surface.frame;
-        body.fillRect(bar, wy, 1, height);
-        lights.fillStyle = '#000';
-        lights.fillRect(bar, wy, 1, height);
-      }
-      if (residential && column % 2 === variant) {
-        body.fillStyle = '#353f3a';
-        body.fillRect(wx - 3, wy + height - 4, width + 6, 6);
-        lights.fillStyle = '#000';
-        lights.fillRect(wx - 3, wy + height - 4, width + 6, 4);
-      }
-    }
-  }
-  for (const texture of [map, emissiveMap]) texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  return new THREE.MeshStandardMaterial({
-    map, emissiveMap, emissive: 0xffffff, emissiveIntensity: 0.95,
-    roughness: surface.roughness, metalness: surface.metalness,
-  });
 }
 
 /** Signage in an invented script, so no real brand or language is implied. */
@@ -318,14 +188,11 @@ function glowSprite(): THREE.CanvasTexture {
 
 export interface Shared {
   windows: THREE.MeshStandardMaterial[];
-  market: THREE.MeshStandardMaterial;
-  apartments: THREE.MeshStandardMaterial;
-  districts: Record<DistrictProfile, THREE.MeshStandardMaterial[]>;
   neon: THREE.MeshBasicMaterial;
   signs: { mat: THREE.MeshBasicMaterial; vertical: boolean; color: number }[];
   ground: THREE.MeshStandardMaterial;
-  park: THREE.MeshStandardMaterial;
   sprite: THREE.CanvasTexture;
+  spire: THREE.MeshStandardMaterial;
 }
 
 export function createShared(): Shared {
@@ -335,6 +202,9 @@ export function createShared(): Shared {
     [['#bfe9ff', '#9fe9ff', '#ffffff'], 0.5], // cool offices
     [['#ff9cc4', '#ffd9a0', '#c9adff'], 0.36], // pink nightlife
     [['#c9adff', '#9fe9ff', '#ffd9a0'], 0.4], // violet
+    [['#7dffb8', '#c8ffd8', '#ff9cc4'], 0.78], // grow-lights (vertical farms)
+    [['#ff9a50', '#ffd9a0', '#ff5a4d'], 0.2], // industrial
+    [['#9ff6ff', '#ffffff', '#2ee6ff'], 0.88], // reactor halls
   ];
   const windows = sets.map(([hues, lit]) => {
     const map = windowTexture(rng, hues, lit);
@@ -358,30 +228,14 @@ export function createShared(): Shared {
   g.glow.repeat.copy(g.map.repeat);
   g.map.offset.set(0.5, 0.5); g.glow.offset.set(0.5, 0.5);
   const ground = new THREE.MeshStandardMaterial({
-    map: g.map, emissive: 0xffffff, emissiveMap: g.glow, emissiveIntensity: 0.9, roughness: 0.74, metalness: 0.18,
+    map: g.map, emissive: 0xffffff, emissiveMap: g.glow, emissiveIntensity: 0.9, roughness: 0.42, metalness: 0.55,
   });
-  // The dense road lighting belongs to District 07. Keep the outer service grid subdued.
-  ground.onBeforeCompile = shader => {
-    shader.vertexShader = 'varying vec2 districtXZ;\n' + shader.vertexShader.replace(
-      '#include <begin_vertex>', '#include <begin_vertex>\n districtXZ = position.xz;',
-    );
-    shader.fragmentShader = 'varying vec2 districtXZ;\n' + shader.fragmentShader.replace(
-      '#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        float outerGrid = smoothstep(${EXTENT / 2}.0, ${EXTENT / 2 + PITCH}.0, max(abs(districtXZ.x), abs(districtXZ.y)));
-        totalEmissiveRadiance *= mix(1.0, 0.10, outerGrid);
-        diffuseColor.rgb *= mix(1.0, 0.42, outerGrid);`,
-    );
-  };
+  const spireMap = windowTexture(rng, ['#2ee6ff', '#bfe9ff', '#ffffff'], 0.7);
+  const spire = new THREE.MeshStandardMaterial({
+    color: 0x6f86a8, map: spireMap, emissive: 0xffffff, emissiveMap: spireMap, emissiveIntensity: 1.5, roughness: 0.35, metalness: 0.6,
+  });
   return {
-    windows, signs, ground, sprite: glowSprite(),
-    park: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, emissive: 0x18291d, emissiveIntensity: 0.22 }),
-    market: frontageMaterial(false), apartments: frontageMaterial(true),
-    districts: {
-      transit: [districtMaterial('transit', 0), districtMaterial('transit', 1)],
-      market: [districtMaterial('market', 0), districtMaterial('market', 1)],
-      industrial: [districtMaterial('industrial', 0), districtMaterial('industrial', 1)],
-      residential: [districtMaterial('residential', 0), districtMaterial('residential', 1)],
-    },
+    windows, signs, ground, spire, sprite: glowSprite(),
     neon: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
   };
 }
@@ -389,17 +243,14 @@ export function createShared(): Shared {
 // ---------- Geometry helpers ----------
 
 /** A box whose side faces carry the window grid at a constant real-world window size. */
-function windowBox(
-  w: number, h: number, d: number, cx: number, y0: number, cz: number, uo: number, vo: number,
-  [bay, floor]: readonly [number, number] = [CELL, CELL],
-): THREE.BufferGeometry {
+function windowBox(w: number, h: number, d: number, cx: number, y0: number, cz: number, uo: number, vo: number): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d);
   const uv = g.attributes.uv as THREE.BufferAttribute;
   for (let f = 0; f < 6; f++) {
     for (let i = 0; i < 4; i++) {
       const k = f * 4 + i;
       if (f === 2 || f === 3) uv.setXY(k, 0.004, 0.004); // roofs sample the dark mullion
-      else uv.setXY(k, uo + (uv.getX(k) * (f < 2 ? d : w)) / (bay * COLS), vo + (uv.getY(k) * h) / (floor * ROWS));
+      else uv.setXY(k, uo + (uv.getX(k) * (f < 2 ? d : w)) / (CELL * COLS), vo + (uv.getY(k) * h) / (CELL * ROWS));
     }
   }
   g.translate(cx, y0 + h / 2, cz);
@@ -416,80 +267,10 @@ function colorBox(w: number, h: number, d: number, x: number, y: number, z: numb
   return g;
 }
 
-function parkCourtyard(shared: Shared, x: number, z: number, w: number, d: number): THREE.Group {
-  const lawn = new THREE.Color(0x223b2b);
-  const walk = new THREE.Color(0x626565);
-  const curb = new THREE.Color(0x424b45);
-  const parts = [
-    colorBox(w, 0.25, d, x, 0.10, z, curb),
-    colorBox(w - 1, 0.10, d - 1, x, 0.27, z, lawn),
-    colorBox(w - 1, 0.06, 2.6, x, 0.33, z, walk),
-    colorBox(2.6, 0.06, d - 1, x, 0.34, z, walk),
-  ];
-  const group = new THREE.Group();
-  group.add(new THREE.Mesh(mergeGeometries(parts), shared.park));
-  parts.forEach(part => part.dispose());
-  return group;
-}
-
 interface Section { w: number; d: number; cx: number; cz: number; y0: number; h: number }
 
-function buildingSections(
-  profile: DistrictProfile, height: number, x: number, z: number, w: number, d: number,
-  rng: () => number, featured?: Structure['featured'],
-): Section[] {
-  if (featured) {
-    const base = featured === 'market' ? 16 : 47;
-    const terrace = (height - base) * 0.45;
-    return [
-      { w, d, cx: x, cz: z, y0: 0, h: base },
-      { w: w * 0.85, d: d * 0.72, cx: x - 0.5, cz: z - 2, y0: base, h: terrace },
-      { w: w * 0.66, d: d * 0.56, cx: x - 1.5, cz: z - 4, y0: base + terrace, h: height - base - terrace },
-    ];
-  }
-
-  const shape = rng();
-  if (profile === 'industrial') {
-    if (shape < 0.28) return [{ w, d, cx: x, cz: z, y0: 0, h: height }];
-    const base = height * 0.78;
-    return [
-      { w, d, cx: x, cz: z, y0: 0, h: base },
-      { w: w * 0.76, d: d * 0.34, cx: x, cz: z - d * 0.11, y0: base, h: height - base },
-    ];
-  }
-
-  if (profile === 'transit') {
-    const podium = Math.min(22, height * 0.28);
-    const cap = (height - podium) * (shape < 0.5 ? 0.14 : 0.25);
-    const shaftScale = shape < 0.5 ? 0.67 : 0.79;
-    const shift = (rng() - 0.5) * w * 0.14;
-    return [
-      { w, d, cx: x, cz: z, y0: 0, h: podium },
-      { w: w * shaftScale, d: d * (1.45 - shaftScale), cx: x + shift, cz: z, y0: podium, h: height - podium - cap },
-      { w: w * (shaftScale - 0.15), d: d * (1.38 - shaftScale), cx: x + shift, cz: z - d * 0.04, y0: height - cap, h: cap },
-    ];
-  }
-
-  if (shape < 0.36 && height < 65) return [{ w, d, cx: x, cz: z, y0: 0, h: height }];
-  const midrise = profile === 'market';
-  const base = height * (midrise ? 0.74 : 0.63);
-  return [
-    { w, d, cx: x, cz: z, y0: 0, h: base },
-    { w: w * (midrise ? 0.9 : 0.77), d: d * (midrise ? 0.89 : 0.82), cx: x, cz: z - d * 0.04, y0: base, h: height - base },
-  ];
-}
-
-export interface Roof {
-  x: number;
-  z: number;
-  y: number;
-  w: number;
-  d: number;
-  profile: DistrictProfile;
-}
-
 export interface Structure {
-  group: THREE.Group | null;
+  group: THREE.Group | null; // null for green space
   holo: THREE.LineSegments | null;
   height: number;
   x: number;
@@ -499,68 +280,61 @@ export interface Structure {
   color: THREE.Color;
   start: number;
   rise: number;
+  /** Fraction already standing when the rise begins (an existing tower growing taller). */
+  from: number;
   p: number;
   done: boolean;
-  featured?: 'market' | 'apartments';
-  galleryAnchor?: boolean;
-  roof?: Roof;
-  trees: [number, number]; // range in the tree instance buffer
+  trees: [number, number]; // range in the block's tree instances
 }
 
-export interface District {
+export interface Block {
+  bx: number;
+  bz: number;
   root: THREE.Group;
   structures: Structure[];
-  spire: Structure;
-  spireTop: number;
   decals: THREE.InstancedMesh;
   trees: THREE.InstancedMesh;
   treeBase: THREE.Matrix4[];
-  tallest: number;
-  dispose: () => void;
 }
 
-function buildTower(sections: Section[], rng: () => number, shared: Shared, bodyMat: THREE.Material, accent: THREE.Color, intent: Intent, detailedFrontage = false, profile?: DistrictProfile) {
+export const blockCenter = (bx: number, bz: number) => ({ x: ORIGIN + (bx + 0.5) * PITCH, z: ORIGIN + (bz + 0.5) * PITCH });
+export const MID = (BLOCKS - 1) / 2;
+
+function buildTower(sections: Section[], rng: () => number, shared: Shared, bodyMat: THREE.Material, accent: THREE.Color, signDensity: number, isSpire: boolean) {
   const body: THREE.BufferGeometry[] = [], neon: THREE.BufferGeometry[] = [], edges: THREE.BufferGeometry[] = [];
   const uo = Math.floor(rng() * COLS) / COLS, vo = Math.floor(rng() * ROWS) / ROWS;
-  const trimStyle = profile ? PROFILES[profile] : undefined;
-  const cell = detailedFrontage ? undefined : trimStyle?.cell;
-  const bright = accent.clone().multiplyScalar(detailedFrontage ? 0.72 : trimStyle ? 0.65 + trimStyle.trim : 1.9);
+  const bright = accent.clone().multiplyScalar(1.9);
   const group = new THREE.Group();
   sections.forEach((s, i) => {
-    body.push(windowBox(s.w, s.h, s.d, s.cx, s.y0, s.cz, uo, vo, cell));
+    body.push(windowBox(s.w, s.h, s.d, s.cx, s.y0, s.cz, uo, vo));
     edges.push(new THREE.EdgesGeometry(new THREE.BoxGeometry(s.w, s.h, s.d)).translate(s.cx, s.y0 + s.h / 2, s.cz));
     const top = s.y0 + s.h;
-    const trim = detailedFrontage ? 0.17 : trimStyle?.trim ?? 0.9;
     // A lit parapet around the top of each setback.
-    if (rng() < (trimStyle ? 0.24 : 0.8) || i === sections.length - 1) {
-      neon.push(colorBox(s.w + 0.6, trim, 0.5, s.cx, top, s.cz + s.d / 2, bright), colorBox(s.w + 0.6, trim, 0.5, s.cx, top, s.cz - s.d / 2, bright));
-      neon.push(colorBox(0.5, trim, s.d + 0.6, s.cx + s.w / 2, top, s.cz, bright), colorBox(0.5, trim, s.d + 0.6, s.cx - s.w / 2, top, s.cz, bright));
+    if (isSpire || rng() < 0.8 || i === sections.length - 1) {
+      neon.push(colorBox(s.w + 0.6, 0.9, 0.5, s.cx, top, s.cz + s.d / 2, bright), colorBox(s.w + 0.6, 0.9, 0.5, s.cx, top, s.cz - s.d / 2, bright));
+      neon.push(colorBox(0.5, 0.9, s.d + 0.6, s.cx + s.w / 2, top, s.cz, bright), colorBox(0.5, 0.9, s.d + 0.6, s.cx - s.w / 2, top, s.cz, bright));
     }
     // Vertical light seams on some corners.
-    if (profile === 'transit' && rng() < 0.18) {
+    if (isSpire || rng() < 0.3) {
       for (const [sx, sz] of [[1, 1], [-1, -1]]) neon.push(colorBox(0.4, s.h, 0.4, s.cx + (sx * s.w) / 2, s.y0 + s.h / 2, s.cz + (sz * s.d) / 2, bright));
     }
   });
   const base = sections[0], last = sections[sections.length - 1];
   // Street-level shopfront band.
   const shop = new THREE.Color([MAGENTA, AMBER, CYAN, GREEN][Math.floor(rng() * 4)]).multiplyScalar(1.5);
-  if (profile === 'market' && !detailedFrontage && rng() < 0.45) {
-    neon.push(colorBox(base.w + 0.4, 0.17, 0.3, base.cx, 5.2, base.cz + base.d / 2, shop));
-  }
+  neon.push(colorBox(base.w + 0.4, 0.5, base.d + 0.4, base.cx, 5.2, base.cz, shop));
   // Antenna.
   let height = last.y0 + last.h;
-  if (rng() < (trimStyle?.antenna ?? 0.6) && (profile !== 'transit' || height > 62)) {
-    const ah = 6 + rng() * 12;
+  if (rng() < 0.6 || isSpire) {
+    const ah = isSpire ? 70 : 10 + rng() * 34;
     body.push(windowBox(0.8, ah, 0.8, last.cx, height, last.cz, 0.004, 0.004));
     neon.push(colorBox(1.6, 1.6, 1.6, last.cx, height + ah, last.cz, new THREE.Color(0xff3030).multiplyScalar(2.2)));
     height += ah;
   }
-  const bodyMesh = new THREE.Mesh(mergeGeometries(body), bodyMat);
-  const neonMesh = new THREE.Mesh(mergeGeometries(neon), shared.neon);
-  group.add(bodyMesh, neonMesh);
+  group.add(new THREE.Mesh(mergeGeometries(body), bodyMat), new THREE.Mesh(mergeGeometries(neon), shared.neon));
 
   // Signs.
-  const count = detailedFrontage ? 0 : Math.floor(rng() * 4.6 * intent.signs * (trimStyle?.signs ?? 1));
+  const count = isSpire ? 0 : Math.floor(rng() * 4.6 * signDensity);
   for (let i = 0; i < count; i++) {
     const s = shared.signs[Math.floor(rng() * shared.signs.length)];
     const sec = rng() < 0.6 ? base : sections[Math.floor(rng() * sections.length)];
@@ -569,177 +343,191 @@ function buildTower(sections: Section[], rng: () => number, shared: Shared, body
     const sw = (s.vertical ? 5 + rng() * 3 : 14 + rng() * 10) * big;
     const sh = s.vertical ? sw * 4 : sw * 0.4;
     const y = low ? 8 + sh / 2 + rng() * 10 : sec.y0 + sec.h - sh / 2 - 3 - rng() * Math.max(0, sec.h - sh - 12) * 0.4;
-    if (y - sh / 2 < sec.y0 + 4 && !low) continue;
+    const face = Math.floor(rng() * 4), along = rng() - 0.5;
+    if (y - sh / 2 < sec.y0 + 4 || y + sh / 2 > sec.y0 + sec.h + 2) continue;
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), s.mat);
-    const face = Math.floor(rng() * 4);
     const off = s.vertical ? 0.8 + sw / 2 : 0.6;
     if (face < 2) {
       const sign = face === 0 ? 1 : -1;
-      const along = (rng() - 0.5) * Math.max(0, sec.w - sw - 2);
-      mesh.position.set(sec.cx + along, y, sec.cz + sign * (sec.d / 2 + off));
+      mesh.position.set(sec.cx + along * Math.max(0, sec.w - sw - 2), y, sec.cz + sign * (sec.d / 2 + off));
       if (s.vertical) mesh.rotation.y = Math.PI / 2; else if (sign < 0) mesh.rotation.y = Math.PI;
     } else {
       const sign = face === 2 ? 1 : -1;
-      const along = (rng() - 0.5) * Math.max(0, sec.d - sw - 2);
-      mesh.position.set(sec.cx + sign * (sec.w / 2 + off), y, sec.cz + along);
+      mesh.position.set(sec.cx + sign * (sec.w / 2 + off), y, sec.cz + along * Math.max(0, sec.d - sw - 2));
       mesh.rotation.y = s.vertical ? 0 : (sign * Math.PI) / 2;
     }
     group.add(mesh);
   }
 
-  const holoMat = new THREE.LineBasicMaterial({ color: 0x2ee6ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+  const holoMat = new THREE.LineBasicMaterial({ color: isSpire ? 0xffffff : 0x2ee6ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
   const holo = new THREE.LineSegments(mergeGeometries(edges), holoMat);
   return { group, holo, height };
 }
 
-function exchangeSections(kind: ExchangeBuilding, x: number, z: number, w: number, d: number, scale: number): Section[] {
-  const works = kind === 'works';
-  const base = works ? 65 : 91;
-  return [
-    { cx: x, cz: z, w, d, y0: 0, h: base },
-    { cx: x + (works ? -8 : 7), cz: z - 8, w: works ? 31 : 34, d: 29, y0: base, h: (works ? 23 : 86) * scale },
-    { cx: x + (works ? -12 : 12), cz: z - 11, w: works ? 14 : 19, d: 16, y0: base + (works ? 23 : 86) * scale, h: (works ? 10 : 31) * scale },
-  ];
-}
+const scratch = new THREE.Matrix4();
+const maxDist = Math.hypot(MID, MID) * PITCH;
 
-// Residential superblocks flanking the canal and the exchange.
-const terraceLots = [[3, 6], [5, 6], [7, 7], [1, 2], [4, 3], [6, 2], [3, 0]];
-
-export function generateDistrict(seed: number, intentKey: IntentKey, shared: Shared): District {
-  const rng = mulberry(seed);
-  const intent = INTENTS[intentKey];
+/**
+ * Design one city block. The same seed always yields the same lots, footprints and signage, so
+ * rebuilding a block with a taller style grows the towers that were already there.
+ * `falloff` makes blocks shorter toward the edge of the district (used by the slice's skyline).
+ */
+export function buildBlock(shared: Shared, bx: number, bz: number, seed: number, style: BlockStyle, falloff = true): Block {
+  const rng = mulberry(seed * 9973 + bx * 131 + bz * 17 + 5);
   const root = new THREE.Group();
   const structures: Structure[] = [];
-  const streetCorner = createStreetCorner();
-  const exchange = createExchangeFrontage();
-  const civicBuildings: { root: THREE.Group; dispose(): void }[] = [];
-  const mid = (BLOCKS - 1) / 2;
-  const treeMats: THREE.Matrix4[] = [];
+  const treeBase: THREE.Matrix4[] = [];
   const treeColors: THREE.Color[] = [];
-  const m = new THREE.Matrix4();
+  const { x: cx, z: cz } = blockCenter(bx, bz);
+  const inner = BLOCK - 8; // pavement all round
 
-  for (let bz = 0; bz < BLOCKS; bz++) {
-    for (let bx = 0; bx < BLOCKS; bx++) {
-      if (bx === CANAL_COLUMN || (bx === mid && bz === mid)) continue;
-      const cx = ORIGIN + (bx + 0.5) * PITCH, cz = ORIGIN + (bz + 0.5) * PITCH;
-      const arcology = bx === 5 && bz === 7;
-      const harbor = bx === 6 && bz === 7;
-      const gardens = bx === 4 && bz === 6;
-      const terrace = terraceLots.findIndex(([x, z]) => x === bx && z === bz);
-      if (arcology || harbor || gardens || terrace !== -1) {
-        const lotSeed = seed + bx * 17 + bz * 101;
-        const size = Math.min(130, Math.max(55, (78 + 30 * mulberry(lotSeed)()) * intent.height));
-        const building = arcology ? createArcology() : harbor ? createSkyHarbor()
-          : gardens ? createFilterGardens() : createTerraceBlock(lotSeed, size);
-        if (terrace !== -1) building.root.rotation.y = (terrace % 4) * Math.PI / 2;
-        building.root.position.set(cx, 0, cz);
-        civicBuildings.push(building);
-        const height = new THREE.Box3().setFromObject(building.root).max.y;
-        structures.push({
-          group: building.root, holo: null, height, x: cx, z: cz, radius: 29, dist: Math.hypot(cx, cz),
-          color: new THREE.Color(gardens ? 0x699b8c : harbor ? 0x739bab : 0xb99c7b),
-          start: 0, rise: 0, p: 0, done: false, trees: [0, 0], galleryAnchor: arcology || harbor,
-        });
-        continue;
-      }
-      const detailedFrontage = bx === STREET_CORNER.blockX && bz === STREET_CORNER.blockZ;
-      const landmark: ExchangeBuilding | undefined = bz === 5 && bx === 5 ? 'works'
-        : bz === 5 && bx === 6 ? 'telemetry' : undefined;
-      const profile = profileAt(bx, bz);
-      const style = PROFILES[profile];
-      const lots = detailedFrontage
-        ? [[cx - 14, cz + 8, 25, 40], [cx + 14, cz + 8, 25, 40]]
-        : landmark ? [[cx, cz, 50, 47]]
-        : profileLots(profile, cx, cz, BLOCK - 8, rng);
-      if (detailedFrontage) streetCorner.pavement(root, cx, cz);
-      for (const [lx, lz, lw, ld] of lots) {
-        const dist = Math.hypot(lx, lz);
-        const intentColor = new THREE.Color(intent.palette[(bx + bz) % intent.palette.length]);
-        const accent = new THREE.Color(style.palette[Math.floor(rng() * style.palette.length)])
-          .lerp(intentColor, detailedFrontage ? 0.75 : 0.2);
-        const base: Omit<Structure, 'group' | 'holo' | 'height' | 'trees'> = {
-          x: lx, z: lz, radius: Math.max(lw, ld) / 2, dist, color: accent, start: 0, rise: 0, p: 0, done: false,
-        };
-        const greenPocket = profile === 'residential' && intentKey !== 'efficient' && (bx + bz * 3) % 7 === 0;
-        const parkChance = (greenPocket ? 0.19 : 0) + intent.park * style.park;
-        if (!detailedFrontage && !landmark && rng() < parkChance) {
-          const first = treeMats.length;
-          const n = Math.round((lw * ld) / 55);
-          for (let i = 0; i < n; i++) {
-            const s = 2.2 + rng() * 2.6;
-            const sideX = i % 2 ? -1 : 1, sideZ = i % 4 < 2 ? 1 : -1;
-            const x = lx + sideX * (2.9 + rng() * (lw / 2 - 5));
-            const z = lz + sideZ * (2.9 + rng() * (ld / 2 - 5));
-            m.makeScale(s, s * (1.1 + rng() * 0.8), s).setPosition(x, s * 0.9 + 0.28, z);
-            treeMats.push(m.clone());
-            treeColors.push(new THREE.Color().setHSL(0.34 + rng() * 0.1, 0.53, 0.25 + rng() * 0.18));
-          }
-          structures.push({ ...base, group: parkCourtyard(shared, lx, lz, lw, ld), holo: null, height: 8, color: new THREE.Color(0x345e43), trees: [first, treeMats.length] });
-          continue;
-        }
-        const featured = detailedFrontage ? (lx > cx ? 'market' : 'apartments') : undefined;
-        const height = featured ? (featured === 'market' ? 37 : 110) : profileHeight(profile, bx, bz, rng);
-        const H = (bz === 8 && (bx === 5 || bx === 6) ? Math.min(height, 19) : height) * intent.height;
-        const sections = landmark ? exchangeSections(landmark, lx, lz, lw, ld, intent.height)
-          : buildingSections(profile, H, lx, lz, lw, ld, rng, featured);
-        const mat = landmark === 'works' ? exchange.concrete : landmark === 'telemetry' ? exchange.metal
-          : featured ? shared[featured] : shared.districts[profile][Math.floor(rng() * 2)];
-        const t = buildTower(sections, rng, shared, mat, accent, intent, detailedFrontage || !!landmark, profile);
-        if (landmark) exchange.detail(t.group, landmark, lx, lz, lw, ld, intent.height);
-        if (detailedFrontage) streetCorner.facade(t.group, lx, lz, lw, ld, lx > cx);
-        const top = sections[sections.length - 1];
-        const roof = { x: top.cx, z: top.cz, y: top.y0 + top.h, w: top.w, d: top.d, profile };
-        structures.push({ ...base, ...t, roof, featured, trees: [0, 0] });
-      }
-    }
+  // Carve the block into 1, 2 or 4 lots.
+  const roll = rng(), alongX = rng() < 0.5, split = 0.38 + rng() * 0.24;
+  const n = style.lots ?? (roll < 0.22 ? 1 : roll < 0.58 ? 2 : 4);
+  const lots: [number, number, number, number][] = [];
+  if (n === 1) lots.push([cx, cz, inner, inner]);
+  else if (n === 2) {
+    const a = inner * split - 2, b = inner * (1 - split) - 2;
+    if (alongX) lots.push([cx - inner / 2 + a / 2, cz, a, inner], [cx + inner / 2 - b / 2, cz, b, inner]);
+    else lots.push([cx, cz - inner / 2 + a / 2, inner, a], [cx, cz + inner / 2 - b / 2, inner, b]);
+  } else {
+    const h = inner / 2 - 2;
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) lots.push([cx + (sx * inner) / 4, cz + (sz * inner) / 4, h, h]);
   }
 
-  const nexus = createNexus();
-  civicBuildings.push(nexus);
-  const spire: Structure = {
-    group: nexus.root, holo: nexus.holo, height: 560, x: 0, z: 0, radius: 29, dist: 0,
-    color: new THREE.Color(CYAN), start: 0, rise: 9, p: 0, done: false, trees: [0, 0],
-  };
+  for (const [lx, lz, lw, ld] of lots) {
+    // Every random draw below happens for every lot, whatever the style, so layouts stay stable.
+    const r = Array.from({ length: 8 }, rng);
+    const lotRng = mulberry(Math.floor(r[7] * 1e9));
+    const dist = Math.hypot(lx, lz);
+    const accent = new THREE.Color(style.palette[Math.floor(r[0] * style.palette.length)]);
+    const base = { x: lx, z: lz, radius: Math.max(lw, ld) / 2, dist, start: 0, rise: 0, from: 0, p: 0, done: false };
+    if (r[1] < style.park) {
+      const first = treeBase.length;
+      const count = Math.round((lw * ld) / 55);
+      for (let i = 0; i < count; i++) {
+        const s = 2.2 + lotRng() * 2.6;
+        scratch.makeScale(s, s * (1.1 + lotRng() * 0.8), s).setPosition(lx + (lotRng() - 0.5) * (lw - 4), s * 0.9, lz + (lotRng() - 0.5) * (ld - 4));
+        treeBase.push(scratch.clone());
+        treeColors.push(new THREE.Color().setHSL(0.36 + lotRng() * 0.12, 0.85, 0.32 + lotRng() * 0.2));
+      }
+      structures.push({ ...base, group: null, holo: null, height: 8, color: new THREE.Color(GREEN), trees: [first, treeBase.length] });
+      continue;
+    }
+    const fall = falloff ? 1.2 - 0.62 * (dist / maxDist) : 1;
+    let H = (55 + r[2] * 130) * fall * style.height;
+    if (r[3] < 0.08) H *= 1.55;
+    H = Math.max(14, H);
+    const count = 1 + Math.floor(r[4] * 3.6);
+    const sections: Section[] = [];
+    let w = lw, d = ld, sx = lx, sz = lz, y0 = 0;
+    for (let i = 0; i < count; i++) {
+      const h = i === count - 1 ? H - y0 : (H - y0) * (0.3 + lotRng() * 0.35);
+      sections.push({ w, d, cx: sx, cz: sz, y0, h });
+      y0 += h;
+      const taper = style.slim ?? 0;
+      const nw = w * (0.68 + lotRng() * 0.2 - taper), nd = d * (0.68 + lotRng() * 0.2 - taper);
+      sx += (lotRng() - 0.5) * (w - nw); sz += (lotRng() - 0.5) * (d - nd);
+      w = nw; d = nd;
+    }
+    const mat = shared.windows[style.windows[Math.floor(r[5] * style.windows.length)]];
+    const t = buildTower(sections, lotRng, shared, mat, accent, style.signs, false);
+    structures.push({ ...base, ...t, color: accent, trees: [0, 0] });
+  }
 
-  for (const s of [...structures, spire]) {
+  for (const s of structures) {
     if (s.group) { s.group.visible = false; root.add(s.group); }
     if (s.holo) { s.holo.visible = false; root.add(s.holo); }
   }
 
-  // Build order: outward from the spire.
-  structures.sort((a, b) => a.dist + (a.x * 0.013 + a.z * 0.007) - (b.dist + (b.x * 0.013 + b.z * 0.007)));
-
   // Coloured light spilling onto the street around each tower.
-  const decalGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   const decalMat = new THREE.MeshBasicMaterial({
     map: shared.sprite, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.32,
     polygonOffset: true, polygonOffsetFactor: -4, toneMapped: false,
   });
-  const decals = new THREE.InstancedMesh(decalGeo, decalMat, structures.length);
-  structures.forEach((s, i) => { decals.setMatrixAt(i, m.makeScale(0, 0, 0)); decals.setColorAt(i, s.color); });
+  const decals = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), decalMat, structures.length);
+  structures.forEach((s, i) => { decals.setMatrixAt(i, scratch.makeScale(0, 0, 0)); decals.setColorAt(i, s.color); });
+  decals.frustumCulled = false;
   root.add(decals);
 
-  const treeGeo = new THREE.IcosahedronGeometry(1, 1);
   const treeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x1f7a52, emissiveIntensity: 0.55, roughness: 0.9, flatShading: true });
-  const trees = new THREE.InstancedMesh(treeGeo, treeMat, Math.max(1, treeMats.length));
-  treeMats.forEach((_, i) => { trees.setMatrixAt(i, m.makeScale(0, 0, 0)); trees.setColorAt(i, treeColors[i]); });
-  trees.count = treeMats.length;
+  const trees = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), treeMat, Math.max(1, treeBase.length));
+  treeBase.forEach((_, i) => { trees.setMatrixAt(i, scratch.makeScale(0, 0, 0)); trees.setColorAt(i, treeColors[i]); });
+  trees.count = treeBase.length;
+  trees.frustumCulled = false;
   root.add(trees);
 
-  const tallest = Math.max(...structures.map(s => s.height));
+  return { bx, bz, root, structures, decals, trees, treeBase };
+}
+
+export function disposeBlock(block: Block): void {
+  block.root.traverse(o => {
+    const mesh = o as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    if (o instanceof THREE.LineSegments) (o.material as THREE.Material).dispose();
+  });
+  (block.decals.material as THREE.Material).dispose();
+  (block.trees.material as THREE.Material).dispose();
+}
+
+/** The Architect's spire, for the central plaza. */
+export function buildSpire(shared: Shared): { structure: Structure; top: number } {
+  const rng = mulberry(31337);
+  const sections: Section[] = [];
+  let y0 = 0, w = 46;
+  for (const h of [70, 110, 130, 110, 70]) { sections.push({ w, d: w, cx: 0, cz: 0, y0, h }); y0 += h; w *= 0.7; }
+  const sp = buildTower(sections, rng, shared, shared.spire, new THREE.Color(CYAN), 0, true);
+  sp.group.visible = false; sp.holo.visible = false;
   return {
-    root, structures, spire, spireTop: spire.height, decals, trees, treeBase: treeMats, tallest,
-    dispose: () => {
-      for (const building of civicBuildings) {
-        building.root.removeFromParent();
-        building.dispose();
-      }
-      root.traverse(o => {
-        const mesh = o as THREE.Mesh;
-        if (mesh.geometry) mesh.geometry.dispose();
-        if (o instanceof THREE.LineSegments) (o.material as THREE.Material).dispose();
-      });
-      decalMat.dispose(); treeMat.dispose(); streetCorner.dispose(); exchange.dispose();
-    },
+    structure: { ...sp, x: 0, z: 0, radius: 23, dist: 0, color: new THREE.Color(CYAN), start: 0, rise: 9, from: 0, p: 0, done: false, trees: [0, 0] },
+    top: sp.height,
   };
+}
+
+const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+const vec = new THREE.Vector3();
+
+/**
+ * Advance one structure's build animation to time `now`: first a flickering hologram of the plan,
+ * then the tower rising out of the ground. `block` is null for the spire.
+ */
+export function animateStructure(block: Block | null, s: Structure, index: number, now: number): void {
+  if (s.done) return;
+  const plan = s.start - 1.6;
+  if (now < plan) return;
+  if (now < s.start) {
+    if (s.holo) {
+      s.holo.visible = true;
+      (s.holo.material as THREE.LineBasicMaterial).opacity = 0.75 * ((now - plan) / 1.6) * (0.75 + 0.25 * Math.sin(now * 40 + index));
+    }
+    if (s.from > 0) show(block, s, index, s.from);
+    return;
+  }
+  const k = Math.min(1, (now - s.start) / s.rise);
+  const p = s.from + (1 - s.from) * ease(k);
+  show(block, s, index, p);
+  if (s.holo) {
+    s.holo.visible = k < 1;
+    (s.holo.material as THREE.LineBasicMaterial).opacity = 0.75 * (1 - k);
+  }
+  if (k >= 1) s.done = true;
+}
+
+function show(block: Block | null, s: Structure, index: number, p: number): void {
+  s.p = p;
+  if (s.group) {
+    s.group.visible = true;
+    s.group.position.y = -(s.height + 3) * (1 - p);
+  }
+  if (!block) return;
+  const r = s.radius * 3.4 * p;
+  block.decals.setMatrixAt(index, scratch.makeScale(r, 1, r).setPosition(s.x, 0.12, s.z));
+  block.decals.instanceMatrix.needsUpdate = true;
+  for (let t = s.trees[0]; t < s.trees[1]; t++) {
+    const base = block.treeBase[t];
+    scratch.copy(base).scale(vec.set(p, p, p));
+    scratch.elements[13] = base.elements[13] * p;
+    block.trees.setMatrixAt(t, scratch);
+    block.trees.instanceMatrix.needsUpdate = true;
+  }
 }

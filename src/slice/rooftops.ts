@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { Roof } from './city';
+import type { Roof } from './district07';
 
 const STEEL = 0x687982;
 const ZINC = 0x9b9f9b;
