@@ -48,9 +48,10 @@ squad selected a tap moves or attacks.
 
 `slice.html` (source in `src/slice/`) is a look-and-feel test for where the game is heading: a 3D
 district raised by an AI "Architect", with every tower, sign and street generated in code. It has no
-gameplay. Brief the Architect (Dense, Balanced or Green), watch the district rise, orbit the skyline,
-or drop to street level and walk through District 07 in 2250, where an elevated shuttle, freight
-lift, and autonomous courier serve the night market. Open it at `http://localhost:5173/slice.html` under `npm run dev`;
+gameplay. The skyline opens above Meridian Exchange, where an enclosed gallery links the split-shell
+arcology to the suspended decks of Sky Harbor. Overview frames the canal, terraced housing, rainwater
+gardens and the orbital tether beyond the district. Brief the Architect (Dense, Balanced or Green) to watch a new district
+rise, orbit the skyline, or drop to street level at the night market. Open it at `http://localhost:5173/slice.html` under `npm run dev`;
 `npm run single` also writes `dist/cyberpunk-city-skyline.html`.
 
 ## Not built yet

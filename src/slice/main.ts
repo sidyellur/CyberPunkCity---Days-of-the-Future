@@ -15,11 +15,19 @@ import { createTransit } from './transit';
 import { createRetrofit } from './retrofit';
 import { createStreetLife } from './streetLife';
 import { createMarketDisplay } from './marketDisplay';
+import { createCanal, CANAL_COLUMN } from './canal';
+import { createHorizon } from './horizon';
+import { createSkyTether } from './skyTether';
+import { createSkyLinks } from './skyLinks';
+import { createRooftops } from './rooftops';
+import { createExchangeLights } from './exchangeFrontage';
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $('scene') as HTMLCanvasElement;
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const FOG = 0x24103f;
+const STREET_FOG = 0x24103f;
+const OVERVIEW_FOG = 0x3a4359;
+const OVERVIEW_FOG_DENSITY = 0.00104;
 
 function boot(): void {
   let renderer: THREE.WebGLRenderer;
@@ -36,30 +44,58 @@ function boot(): void {
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, small ? 1.5 : 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
+  renderer.shadowMap.enabled = !small;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(FOG, 0.0015);
-  scene.background = new THREE.Color(FOG);
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 9000);
-  camera.position.set(560, 250, 640);
+  const haze = new THREE.FogExp2(OVERVIEW_FOG, OVERVIEW_FOG_DENSITY);
+  scene.fog = haze;
+  const skylineFov = small ? 67 : 58;
+  const camera = new THREE.PerspectiveCamera(skylineFov, 1, 0.5, 9000);
+  const overlook = new THREE.Vector3(224, 97, 452);
+  const focus = new THREE.Vector3(117, 78, 234);
+  const widePosition = new THREE.Vector3(-146, 488, 723);
+  const wideFocus = new THREE.Vector3(14, 224, 61);
 
   // ----- Sky: a glow on the horizon fading to black overhead -----
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(7000, 32, 16),
     new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { low: { value: new THREE.Color(0x7a2f6a) }, mid: { value: new THREE.Color(FOG) }, high: { value: new THREE.Color(0x020308) } },
+      uniforms: {
+        low: { value: new THREE.Color(0x454053) },
+        mid: { value: haze.color },
+        high: { value: new THREE.Color(0x162642) },
+        street: { value: 0 },
+      },
       vertexShader: 'varying vec3 v; void main(){ v = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: `varying vec3 v; uniform vec3 low; uniform vec3 mid; uniform vec3 high;
-        void main(){ float h = clamp(v.y, 0.0, 1.0);
-          vec3 c = mix(low, mid, smoothstep(0.0, 0.11, h)); c = mix(c, high, smoothstep(0.08, 0.5, h));
-          gl_FragColor = vec4(c, 1.0); }`,
+      fragmentShader: `
+        varying vec3 v;
+        uniform vec3 low, mid, high;
+        uniform float street;
+        void main() {
+          vec3 direction = normalize(v);
+          float elevation = max(0.0, direction.y);
+          vec3 color = mix(low, mid, smoothstep(0.0, mix(0.24, 0.11, street), elevation));
+          vec3 zenith = mix(high, vec3(0.0006, 0.0009, 0.0024), street);
+          color = mix(color, zenith, smoothstep(mix(0.12, 0.08, street), mix(0.65, 0.5, street), elevation));
+          float folds = sin(direction.z * 17.0 - direction.x * 8.0 + elevation * 53.0)
+            * sin(direction.x * 9.0 + elevation * 78.0) * 0.5 + 0.5;
+          float cloud = smoothstep(0.47, 0.9, folds)
+            * smoothstep(0.01, 0.16, elevation) * (1.0 - smoothstep(0.17, 0.62, elevation));
+          color += cloud * vec3(0.007, 0.009, 0.013) * (1.0 - street);
+          float twilight = pow(max(0.0, dot(direction, normalize(vec3(-0.73, 0.05, -0.68)))), 4.0)
+            * exp(-4.8 * elevation) * (1.0 - street);
+          color += vec3(0.085, 0.037, 0.018) * twilight;
+          color = mix(mid, color, mix(smoothstep(-0.08, 0.045, direction.y), 1.0, street));
+          gl_FragColor = vec4(color, 1.0);
+        }`,
     }),
   );
   scene.add(sky);
 
   // ----- Light: mostly emissive surfaces, with two coloured washes for shape -----
-  scene.add(new THREE.HemisphereLight(0x4b3a8c, 0x06070c, 0.9));
+  const ambient = new THREE.HemisphereLight(0x4b3a8c, 0x06070c, 0.9);
+  scene.add(ambient);
   const wash1 = new THREE.DirectionalLight(0xff4d9d, 0.9); wash1.position.set(-1, 0.6, 0.4);
   const wash2 = new THREE.DirectionalLight(0x35c8ff, 0.7); wash2.position.set(0.8, 0.5, -1);
   scene.add(wash1, wash2);
@@ -70,46 +106,35 @@ function boot(): void {
   const retrofit = createRetrofit();
   const streetLife = createStreetLife();
   const marketDisplay = createMarketDisplay();
-  scene.add(transit.root, streetLife.root);
-  const cornerFeatures = [transit, retrofit, streetLife, marketDisplay];
+  const canal = createCanal();
+  const tether = createSkyTether();
+  const gallery = createSkyLinks();
+  scene.add(tether.root, gallery);
+  scene.add(transit.root, streetLife.root, canal.root, createHorizon(shared.windows[1], EXTENT));
+  const cornerFeatures = [retrofit, streetLife, marketDisplay];
   const streetObstacles = [...transit.colliders, ...streetLife.colliders];
   for (const feature of cornerFeatures) feature.update(0);
+  transit.update(0);
+  canal.update(0);
   let cornerTime = 0;
   let streetEntered = false;
 
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_TILES * PITCH, GROUND_TILES * PITCH).rotateX(-Math.PI / 2), shared.ground);
-  scene.add(ground);
-
-  // ----- A far skyline in the haze, for scale -----
-  {
-    const farMat = shared.windows[1].clone();
-    const farMap = farMat.map!.clone();
-    farMap.repeat.set(2.5, 5); farMap.needsUpdate = true;
-    farMat.map = farMat.emissiveMap = farMap;
-    farMat.emissiveIntensity = 0.8;
-    const far = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), farMat, 420);
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
-    for (let i = 0; i < far.count; i++) {
-      const a = rng() * Math.PI * 2, r = EXTENT * 0.75 + 260 + rng() * 2400;
-      s.set(50 + rng() * 80, (120 + rng() * 420) * (1 - r / 4600), 50 + rng() * 80);
-      p.set(Math.cos(a) * r, 0, Math.sin(a) * r);
-      if (Math.abs(p.x) < EXTENT / 2 + 40 && Math.abs(p.z) < EXTENT / 2 + 40) s.set(0, 0, 0);
-      far.setMatrixAt(i, m.compose(p, q, s));
-    }
-    scene.add(far);
-  }
+  ground.receiveShadow = true;
+  const exchangeLights = createExchangeLights(!small);
+  scene.add(ground, exchangeLights);
 
   // ----- Street lamps -----
   {
     const spots = lampSpots();
-    const n = (BLOCKS * BLOCKS - 1) * spots.length;
+    const n = (BLOCKS * (BLOCKS - 1) - 1) * spots.length;
     const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.25, 7, 0.25).translate(0, 3.5, 0), new THREE.MeshStandardMaterial({ color: 0x1a1d2a, roughness: 0.6 }), n);
     const heads = new Float32Array(n * 3);
     const m = new THREE.Matrix4();
     let i = 0;
     const mid = (BLOCKS - 1) / 2;
     for (let bz = 0; bz < BLOCKS; bz++) for (let bx = 0; bx < BLOCKS; bx++) {
-      if (bx === mid && bz === mid) continue;
+      if (bx === CANAL_COLUMN || (bx === mid && bz === mid)) continue;
       const cx = ORIGIN + (bx + 0.5) * PITCH, cz = ORIGIN + (bz + 0.5) * PITCH;
       for (const [lx, lz] of spots) {
         posts.setMatrixAt(i, m.makeTranslation(cx + lx, 0, cz + lz));
@@ -131,6 +156,9 @@ function boot(): void {
   const traffic = { pos: new Float32Array(TRAFFIC * 3), lane: [] as { axis: 0 | 1; line: number; y: number; speed: number; off: number }[] };
   const trafficGeo = new THREE.BufferGeometry();
   const trafficSpan = EXTENT + 900;
+  const trafficLights = new THREE.PointsMaterial({
+    map: shared.sprite, vertexColors: true, size: 6, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+  });
   {
     const col = new Float32Array(TRAFFIC * 3);
     const palette = [new THREE.Color(0xffffff), new THREE.Color(0xff4040), new THREE.Color(0xffb347), new THREE.Color(0x7de8ff)];
@@ -147,9 +175,7 @@ function boot(): void {
     }
     trafficGeo.setAttribute('position', new THREE.BufferAttribute(traffic.pos, 3));
     trafficGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const pts = new THREE.Points(trafficGeo, new THREE.PointsMaterial({
-      map: shared.sprite, vertexColors: true, size: 6, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
-    }));
+    const pts = new THREE.Points(trafficGeo, trafficLights);
     pts.frustumCulled = false;
     scene.add(pts);
   }
@@ -224,13 +250,36 @@ function boot(): void {
   // ----- Post-processing -----
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 1.0, 0.85, 0.62);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.7, 0.72, 0.7);
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
+
+  function setAtmosphere(street: boolean): void {
+    exchangeLights.visible = !street;
+    trafficLights.size = street ? 6 : 2.2;
+    trafficLights.opacity = street ? 1 : 0.66;
+    renderer.toneMappingExposure = street ? 1.15 : 1.23;
+    ambient.color.setHex(street ? 0x4b3a8c : 0xb4c4df);
+    ambient.groundColor.setHex(street ? 0x06070c : 0x566273);
+    ambient.intensity = street ? 0.9 : 1.06;
+    wash1.color.setHex(street ? 0xff4d9d : 0xffdbc4);
+    wash1.position.set(-1, street ? 0.6 : 0.85, street ? 0.4 : 0.9);
+    wash1.intensity = street ? 0.9 : 1.45;
+    wash2.color.setHex(street ? 0x35c8ff : 0x9ccce6);
+    wash2.intensity = street ? 0.7 : 0.82;
+    haze.color.setHex(street ? STREET_FOG : OVERVIEW_FOG);
+    haze.density = street ? 0.0015 : OVERVIEW_FOG_DENSITY;
+    sky.material.uniforms.low.value.setHex(street ? 0x7a2f6a : 0x68677b);
+    sky.material.uniforms.street.value = Number(street);
+    (rain.material as THREE.LineBasicMaterial).opacity = street ? 0.22 : 0.035;
+  }
+  setAtmosphere(false);
 
   // ----- District state -----
   let intent: IntentKey = 'balanced';
   let district: District;
+  let galleryAnchors: Structure[];
+  let rooftops: ReturnType<typeof createRooftops>;
   let clock = 0; // build clock, seconds
   let seed = 7;
   let finished = false;
@@ -249,13 +298,17 @@ function boot(): void {
       marketDisplay.root.removeFromParent();
       scene.remove(district.root);
       district.dispose();
+      rooftops.dispose();
     }
     seed = newSeed;
     district = generateDistrict(seed, intent, shared);
-    for (const building of district.structures) {
+    galleryAnchors = district.structures.filter(s => s.galleryAnchor);
+    rooftops = createRooftops();
+    district.structures.forEach((building, index) => {
       if (building.featured === 'apartments') building.group?.add(retrofit.root);
       if (building.featured === 'market') building.group?.add(marketDisplay.root);
-    }
+      if (building.group && building.roof) rooftops.attach(building.group, building.roof, seed + index * 31);
+    });
     schedule(district, Math.floor(district.structures.length * prebuiltShare));
     scene.add(district.root);
     clock = 0;
@@ -313,6 +366,7 @@ function boot(): void {
       if (s.done) built++;
       else if (s.p > 0) rising.push(s);
     });
+    gallery.visible = galleryAnchors.every(s => s.done);
     const total = district.structures.length;
     const done = built === total && district.spire.done;
     ($('meter-fill') as HTMLElement).style.width = `${(built / total) * 100}%`;
@@ -329,15 +383,14 @@ function boot(): void {
 
   // ----- Cameras -----
   const controls = new OrbitControls(camera, canvas);
-  controls.target.set(0, 130, 0);
+  camera.position.copy(overlook);
+  controls.target.copy(focus);
   controls.enableDamping = true;
   controls.dampingFactor = 0.06;
   controls.minDistance = 90;
   controls.maxDistance = 2600;
   controls.maxPolarAngle = Math.PI / 2 - 0.02;
-  controls.autoRotate = !reduced;
-  controls.autoRotateSpeed = 0.35;
-  controls.addEventListener('start', () => { controls.autoRotate = false; });
+  controls.update();
 
   let walking = false;
   const walk = { yaw: 0, pitch: 0.28, x: 0, z: 0, hold: false };
@@ -351,6 +404,8 @@ function boot(): void {
     const fx = (((x - ORIGIN) % PITCH) + PITCH) % PITCH - PITCH / 2, fz = (((z - ORIGIN) % PITCH) + PITCH) % PITCH - PITCH / 2;
     const bx = Math.floor((x - ORIGIN) / PITCH), bz = Math.floor((z - ORIGIN) / PITCH);
     const mid = (BLOCKS - 1) / 2;
+    if (canal.blocksWalk(x, z)) return true;
+    if (bx === CANAL_COLUMN) return false;
     if (bx === mid && bz === mid) return Math.abs(x) < 26 && Math.abs(z) < 26;
     if (bx < 0 || bz < 0 || bx >= BLOCKS || bz >= BLOCKS) return false;
     return Math.abs(fx) < BLOCK / 2 - 3.2 && Math.abs(fz) < BLOCK / 2 - 3.2;
@@ -360,23 +415,26 @@ function boot(): void {
     if (street === walking) return;
     walking = street;
     $('view-sky').classList.toggle('on', !street);
+    $('view-wide').classList.remove('on');
     $('view-street').classList.toggle('on', street);
     controls.enabled = !street;
     if (street) {
       saved.pos.copy(camera.position); saved.target.copy(controls.target);
-      controls.autoRotate = false;
       Object.assign(walk, STREET_CORNER.camera);
       streetEntered = true;
+      setAtmosphere(true);
       bloom.strength = 0.38;
       bloom.threshold = 0.88;
       camera.fov = 72;
     } else {
-      bloom.strength = 1;
-      bloom.threshold = 0.62;
+      setAtmosphere(false);
+      bloom.strength = 0.7;
+      bloom.threshold = 0.7;
       camera.position.copy(saved.pos); controls.target.copy(saved.target);
-      camera.fov = 50;
+      camera.fov = skylineFov;
     }
     camera.updateProjectionMatrix();
+    if (street) stepWalk(0); else controls.update();
     ($('walk-hold') as HTMLElement).hidden = !(street && touch);
     hint();
   }
@@ -428,7 +486,7 @@ function boot(): void {
     if (!blocked(walk.x + dx, walk.z)) walk.x += dx;
     if (!blocked(walk.x, walk.z + dz)) walk.z += dz;
     const bob = f || s ? Math.sin(performance.now() * 0.011) * 0.05 : 0;
-    camera.position.set(walk.x, 1.75 + bob, walk.z);
+    camera.position.set(walk.x, 1.75 + bob + canal.walkHeight(walk.x, walk.z), walk.z);
     camera.rotation.set(walk.pitch, walk.yaw, 0, 'YXZ');
   }
 
@@ -445,7 +503,21 @@ function boot(): void {
     for (const b of Array.from(intentsEl.children) as HTMLElement[]) b.classList.toggle('on', b.dataset.k === intent);
     $('blurb').textContent = INTENTS[intent].blurb;
   }
-  $('view-sky').addEventListener('click', () => setView(false));
+  function frameSkyline(wide: boolean): void {
+    setView(false);
+    controls.enableDamping = false;
+    controls.update();
+    camera.position.copy(wide ? widePosition : overlook);
+    controls.target.copy(wide ? wideFocus : focus);
+    controls.update();
+    controls.enableDamping = true;
+    $('view-sky').classList.toggle('on', !wide);
+    $('view-wide').classList.toggle('on', wide);
+    hint();
+  }
+
+  $('view-sky').addEventListener('click', () => frameSkyline(false));
+  $('view-wide').addEventListener('click', () => frameSkyline(true));
   $('view-street').addEventListener('click', () => setView(true));
   $('rebuild').addEventListener('click', () => raise(seed + 1, 0));
   $('skip').addEventListener('click', () => advance(1e4));
@@ -484,7 +556,9 @@ function boot(): void {
     trafficGeo.attributes.position.needsUpdate = true;
 
     // Drones swarm whatever is going up; with nothing to build they circle the spire.
-    for (let i = 0; i < DRONES; i++) {
+    const activeDrones = finished ? 14 : DRONES;
+    droneGeo.setDrawRange(0, activeDrones);
+    for (let i = 0; i < activeDrones; i++) {
       const target = rising.length ? rising[i % rising.length] : district.spire;
       const a = t * (0.6 + (i % 7) * 0.13) + i * 2.4;
       const r = target.radius * (1.1 + (i % 5) * 0.12);
@@ -504,23 +578,28 @@ function boot(): void {
       ring.rotation.x = Math.PI / 2 + Math.sin(t * 0.5 + i) * 0.25;
     });
     beams.forEach((b, i) => {
-      b.visible = finished || district.spire.p > 0.5;
+      b.visible = walking && (finished || district.spire.p > 0.5);
       b.rotation.set(0.5 + Math.sin(t * 0.21 + i * 1.7) * 0.32, 0, Math.sin(t * 0.17 + i * 2.3) * 0.5);
     });
-    core.scale.setScalar(1 + Math.sin(t * 3) * 0.08);
+    const surveyActive = walking || !finished;
+    beam.visible = surveyActive;
+    core.scale.setScalar((surveyActive ? 1 : 0.42) * (1 + Math.sin(t * 3) * 0.08));
     (beam.material as THREE.MeshBasicMaterial).opacity = 0.24 + Math.sin(t * 2.1) * 0.05;
     const pulseT = (t % 5) / 5;
-    pulse.visible = !finished || pulseT < 0.5;
+    pulse.visible = !finished || (walking && pulseT < 0.5);
     pulse.scale.setScalar(20 + pulseT * 700);
     (pulse.material as THREE.MeshBasicMaterial).opacity = 0.7 * (1 - pulseT);
     // A couple of signs with bad wiring.
     shared.signs[3].mat.opacity = Math.sin(t * 31) > 0.82 || Math.sin(t * 7.3) > 0.93 ? 0.25 : 1;
     shared.signs[8].mat.opacity = Math.sin(t * 23 + 1) > 0.9 ? 0.4 : 1;
 
-    if (!reduced && streetEntered) {
-      cornerTime += dt;
+    if (!reduced) {
+      if (streetEntered) cornerTime += dt;
       const motionTime = Math.max(0, cornerTime - 1.6);
-      for (const feature of cornerFeatures) feature.update(motionTime);
+      transit.update(t, motionTime);
+      canal.update(t);
+      tether.update(t);
+      if (streetEntered) for (const feature of cornerFeatures) feature.update(motionTime);
     }
     if (walking) stepWalk(dt); else controls.update();
 
@@ -546,9 +625,8 @@ function boot(): void {
   refreshIntent();
   hint();
   resize();
-  // Open on a skyline already under way: the inner ring stands, the rest is still rising.
-  raise(seed, reduced ? 1 : 0.3);
-  if (reduced) advance(1e4);
+  // Open on the complete city. New projects still rise when the Architect is briefed.
+  raise(seed, 1);
   requestAnimationFrame(frame);
 
   (window as unknown as Record<string, unknown>).__slice = {
