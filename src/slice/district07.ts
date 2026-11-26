@@ -9,6 +9,7 @@ import { createArcology } from './arcology';
 import { createSkyHarbor } from './skyHarbor';
 import { createFilterGardens } from './filterGardens';
 import { createTerraceBlock } from './terraceBlocks';
+import { clad } from './cladding';
 import { createNexus } from './nexus';
 
 export type { DistrictProfile } from './districtProfiles';
@@ -171,6 +172,13 @@ function districtMaterial(profile: DistrictProfile, variant: 0 | 1): THREE.MeshS
     g.fillStyle = '#000';
     g.fillRect(0, 0, 256, 512);
   });
+  const roughnessMap = canvasTexture(256, 512, g => {
+    const wall = Math.round(158 + 87 * surface.roughness);
+    g.fillStyle = `rgb(${wall}, ${wall}, ${wall})`;
+    g.fillRect(0, 0, 256, 512);
+  });
+  roughnessMap.colorSpace = THREE.NoColorSpace;
+  const finish = roughnessMap.image.getContext('2d') as CanvasRenderingContext2D;
   const body = map.image.getContext('2d') as CanvasRenderingContext2D;
   const lights = emissiveMap.image.getContext('2d') as CanvasRenderingContext2D;
   for (let row = 0; row < ROWS; row++) {
@@ -192,8 +200,14 @@ function districtMaterial(profile: DistrictProfile, variant: 0 | 1): THREE.MeshS
       const wy = y + (industrial ? 6 : 5);
       body.fillStyle = surface.frame;
       body.fillRect(wx - 1, wy - 1, width + 2, height + 2);
-      body.fillStyle = surface.window;
+      const pane = body.createLinearGradient(0, wy, 0, wy + height);
+      pane.addColorStop(0, '#141f27');
+      pane.addColorStop(0.46, surface.window);
+      pane.addColorStop(1, transit ? '#45606a' : '#384348');
+      body.fillStyle = pane;
       body.fillRect(wx, wy, width, height);
+      finish.fillStyle = '#454545';
+      finish.fillRect(wx, wy, width, height);
       if (rng() < surface.lit) {
         lights.fillStyle = surface.glow[rng() < 0.81 ? variant : 1 - variant];
         lights.globalAlpha = 0.18 + rng() ** 1.6 * 0.76;
@@ -206,6 +220,8 @@ function districtMaterial(profile: DistrictProfile, variant: 0 | 1): THREE.MeshS
         body.fillRect(bar, wy, 1, height);
         lights.fillStyle = '#000';
         lights.fillRect(bar, wy, 1, height);
+        finish.fillStyle = '#bcbcbc';
+        finish.fillRect(bar, wy, 1, height);
       }
       if (residential && column % 2 === variant) {
         body.fillStyle = '#353f3a';
@@ -215,10 +231,10 @@ function districtMaterial(profile: DistrictProfile, variant: 0 | 1): THREE.MeshS
       }
     }
   }
-  for (const texture of [map, emissiveMap]) texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  for (const texture of [map, emissiveMap, roughnessMap]) texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   return new THREE.MeshStandardMaterial({
     map, emissiveMap, emissive: 0xffffff, emissiveIntensity: 0.95,
-    roughness: surface.roughness, metalness: surface.metalness,
+    roughnessMap, roughness: 1, metalness: surface.metalness,
   });
 }
 
@@ -320,6 +336,7 @@ export interface Shared {
   windows: THREE.MeshStandardMaterial[];
   market: THREE.MeshStandardMaterial;
   apartments: THREE.MeshStandardMaterial;
+  facadeTrim: THREE.MeshStandardMaterial;
   districts: Record<DistrictProfile, THREE.MeshStandardMaterial[]>;
   neon: THREE.MeshBasicMaterial;
   signs: { mat: THREE.MeshBasicMaterial; vertical: boolean; color: number }[];
@@ -376,6 +393,7 @@ export function createShared(): Shared {
     windows, signs, ground, sprite: glowSprite(),
     park: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, emissive: 0x18291d, emissiveIntensity: 0.22 }),
     market: frontageMaterial(false), apartments: frontageMaterial(true),
+    facadeTrim: clad(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.71, metalness: 0.16 })),
     districts: {
       transit: [districtMaterial('transit', 0), districtMaterial('transit', 1)],
       market: [districtMaterial('market', 0), districtMaterial('market', 1)],
@@ -524,12 +542,33 @@ function buildTower(sections: Section[], rng: () => number, shared: Shared, body
   const uo = Math.floor(rng() * COLS) / COLS, vo = Math.floor(rng() * ROWS) / ROWS;
   const trimStyle = profile ? PROFILES[profile] : undefined;
   const cell = detailedFrontage ? undefined : trimStyle?.cell;
+  const fittings: THREE.BufferGeometry[] = [];
+  const nearExchange = Math.hypot(sections[0].cx - 88, sections[0].cz - 204) < 270;
+  const concrete = new THREE.Color(profile === 'market' ? 0x9f8c7a : 0x89928d);
+  const coping = new THREE.Color(0x59676a);
   const bright = accent.clone().multiplyScalar(detailedFrontage ? 0.72 : trimStyle ? 0.65 + trimStyle.trim : 1.9);
   const group = new THREE.Group();
   sections.forEach((s, i) => {
     body.push(windowBox(s.w, s.h, s.d, s.cx, s.y0, s.cz, uo, vo, cell));
     edges.push(new THREE.EdgesGeometry(new THREE.BoxGeometry(s.w, s.h, s.d)).translate(s.cx, s.y0 + s.h / 2, s.cz));
     const top = s.y0 + s.h;
+    if (nearExchange && !detailedFrontage) {
+      // Raised coping catches the low sun along the setbacks. Projecting blades
+      // break the curtain wall into bays and shade the glazing underneath.
+      for (const sign of [-1, 1]) {
+        fittings.push(colorBox(s.w, 0.86, 0.52, s.cx, top + 0.42, s.cz + sign * (s.d / 2 - 0.26), coping));
+        fittings.push(colorBox(0.52, 0.86, s.d - 1.04, s.cx + sign * (s.w / 2 - 0.26), top + 0.42, s.cz, coping));
+      }
+      if (profile === 'transit' || profile === 'market') {
+        const bays = Math.max(2, Math.round(s.w / (profile === 'transit' ? 6 : 8)));
+        for (let bay = 0; bay <= bays; bay++) {
+          const x = s.cx - (s.w - 1) / 2 + bay * (s.w - 1) / bays;
+          fittings.push(colorBox(0.55, s.h, 1.6, x, s.y0 + s.h / 2, s.cz + s.d / 2 + 0.58, concrete));
+        }
+        const endX = s.cx - s.w / 2;
+        fittings.push(colorBox(1.2, s.h, s.d * 0.19, endX, s.y0 + s.h / 2, s.cz + s.d * 0.31, concrete));
+      }
+    }
     const trim = detailedFrontage ? 0.17 : trimStyle?.trim ?? 0.9;
     // A lit parapet around the top of each setback.
     if (rng() < (trimStyle ? 0.24 : 0.8) || i === sections.length - 1) {
@@ -558,6 +597,10 @@ function buildTower(sections: Section[], rng: () => number, shared: Shared, body
   const bodyMesh = new THREE.Mesh(mergeGeometries(body), bodyMat);
   const neonMesh = new THREE.Mesh(mergeGeometries(neon), shared.neon);
   group.add(bodyMesh, neonMesh);
+  if (fittings.length) {
+    group.add(new THREE.Mesh(mergeGeometries(fittings), shared.facadeTrim));
+    fittings.forEach(part => part.dispose());
+  }
 
   // Signs.
   const count = detailedFrontage ? 0 : Math.floor(rng() * 4.6 * intent.signs * (trimStyle?.signs ?? 1));

@@ -1,3 +1,4 @@
+import { clad } from './cladding';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
@@ -35,7 +36,7 @@ export function createSkyHarbor() {
   const root = new THREE.Group();
   root.name = 'Meridian Sky Harbor';
   const finishes: Record<Finish, THREE.Material> = {
-    shell: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.53, metalness: 0.25 }),
+    shell: clad(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.44, metalness: 0.43 })),
     glass: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.31, metalness: 0.34, emissive: 0x163940, emissiveIntensity: 0.32 }),
     light: new THREE.MeshBasicMaterial({ vertexColors: true }),
   };
