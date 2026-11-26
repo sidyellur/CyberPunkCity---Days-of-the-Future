@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#05060c" />
+  <title>CyberPunk City | Kit preview</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #05060c; }
+    #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    #stats { position: fixed; left: 8px; top: 8px; padding: 6px 9px; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #bfe9ff; background: rgba(6, 8, 18, 0.78); border-left: 3px solid #2ee6ff; white-space: pre-wrap; max-width: calc(100vw - 34px); box-sizing: border-box; pointer-events: none; }
+    #stats.over { border-color: #ff5a4d; color: #ffd0cc; }
+    .fallback { position: fixed; inset: 0; display: grid; place-items: center; color: #bfe9ff; font: 16px system-ui, sans-serif; }
+  </style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="stats"></div>
+  <script type="module" src="/src/slice/kits/preview.ts"></script>
+</body>
+</html>
