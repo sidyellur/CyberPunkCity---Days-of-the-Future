@@ -6,6 +6,6 @@ export default defineConfig({
   build: {
     target: 'es2020',
     assetsInlineLimit: 0,
-    rollupOptions: { input: { main: resolve(__dirname, 'index.html'), slice: resolve(__dirname, 'slice.html') } },
+    rollupOptions: { input: { main: resolve(__dirname, 'index.html'), classic: resolve(__dirname, 'classic.html'), slice: resolve(__dirname, 'slice.html') } },
   },
 });

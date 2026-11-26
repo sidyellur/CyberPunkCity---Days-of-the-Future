@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const dist = new URL('../dist/', import.meta.url).pathname;
-const pages = { 'index.html': 'cyberpunk-city', 'slice.html': 'cyberpunk-city-skyline' };
+const pages = { 'index.html': 'cyberpunk-city', 'classic.html': 'cyberpunk-city-classic', 'slice.html': 'cyberpunk-city-skyline' };
 
 for (const [page, name] of Object.entries(pages)) {
   const html = readFileSync(join(dist, page), 'utf8');

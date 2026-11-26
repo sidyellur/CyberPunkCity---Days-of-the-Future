@@ -1,10 +1,11 @@
 # CyberPunk City: Days of the Future
 
-A cyberpunk city-builder and real-time strategy hybrid that runs in the browser. Raise a megacity
-around your Nexus Spire, keep its citizens fed, housed and powered, and bring down the rival
-Vanta Collective before its raids bring down you.
+A city-building game set two hundred years from now, when cities are not built by hand. You decide
+what the city needs; a superintelligence, the Architect, designs it and raises it. Runs in the
+browser, in 3D, with every tower, sign and street generated in code (no art assets).
 
-Single-player; no assets (all art is drawn in code).
+The plan is four layers, tracked as issues: building (#1), administration (#2), conflict (#3) and
+eras (#4). **Layer 1, building, is what is playable today.**
 
 ## Play
 
@@ -13,45 +14,46 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
-`npm run single` builds one self-contained file, `dist/cyberpunk-city.html`, that can be opened or
-hosted anywhere.
+`npm run single` builds self-contained single files in `dist/` that can be opened or hosted anywhere.
 
-## How it plays
+## How it plays (Layer 1)
 
-- **City.** Place buildings near your grid. Citizens fill worker slots automatically (farms and
-  reactors first); adjust crews per building. Food, housing, power and plazas drive morale, and
-  morale drives output and growth.
-- **Power.** Solar is strong by day and weak at night. Demand above supply is a brownout: output
-  drops, turrets slow, morale falls. Fusion Cells fix it at District tier.
-- **Tiers.** Advance the Nexus through Block, District, Sector and Megacity. Each tier unlocks
-  buildings and units, raises the building level cap and army cap, and makes squads 15% stronger.
-- **Squads.** Train Enforcers, Striker Drones and Titan Mechs at Security Hubs. Hold Uplink Nodes
-  for credits and data. Idle squads heal near the Nexus.
-- **The rival.** The Vanta Collective raids on a timer, with growing waves. Destroy its Nexus to win.
+- **Brief the Architect.** Pick an empty lot, choose what should stand there (housing, vertical
+  farms, industry, commerce, power, green space, research) and its character (dense, balanced,
+  green). The Architect projects a plan, then raises the district.
+- **Or approve its proposals.** The Architect watches the city's numbers and proposes the next move
+  with a reason. Approve it, ignore it, or brief something else. It is rule-based (`src/city/architect.ts`).
+- **One economy.** Districts provide homes, jobs, food, alloy, credits, power and data. Citizens
+  staff the jobs; a brownout or hunger cuts output and morale; morale drives growth.
+- **Neighbours matter.** Homes beside industry are unhappy, homes beside green space are happier,
+  and shops next to homes earn more.
+- **Build upward.** Upgrade the Architect to grow districts to higher levels; towers get taller.
+- **Walk it.** The Street button drops you to eye level between the towers.
 
-Controls: left-click selects, drag box-selects, right-click moves or attacks, wheel zooms, WASD or
-arrow keys pan, Space pauses, Esc cancels. On touch: drag pans, pinch zooms, tap selects, and with a
-squad selected a tap moves or attacks.
+There is no fighting or failure state in this layer yet; that arrives with layers 2 and 3.
+
+## Pages
+
+| Page | What it is |
+| --- | --- |
+| `index.html` | The game (Layer 1). Source in `src/city/`. |
+| `slice.html` | The original visual test: a whole district raised at once, no gameplay. Source in `src/slice/`. |
+| `classic.html` | The first 2D prototype, with squads and a raiding rival. Source in `src/sim/` and `src/ui/`. Its combat rules are the starting point for Layer 3. |
 
 ## Code
 
-- `src/sim/` is the whole game as a deterministic, DOM-free simulation over a plain-JSON state:
-  `defs.ts` (data tables: tune balance here), `state.ts` (world and map generation), `path.ts` (A*),
-  `sim.ts` (tick: economy, combat, rival AI), `commands.ts` (player actions), `save.ts`.
-- `src/ui/` draws it: `render.ts` (isometric canvas), `hud.ts` (HUD markup). `src/main.ts` is the
-  loop, camera and input.
-- `tests/sim.test.ts` covers the rules; `tests/bot.test.ts` plays full games with a scripted player
-  (`VITE_BOT_LOG=1 npm test` prints its minute-by-minute economy, useful when tuning).
-- `scripts/playtest.mjs` drives the built game in headless Chromium and saves screenshots.
-
-## Visual slice
-
-`slice.html` (source in `src/slice/`) is a look-and-feel test for where the game is heading: a 3D
-district raised by an AI "Architect", with every tower, sign and street generated in code. It has no
-gameplay. Brief the Architect (Dense, Balanced or Green), watch the district rise, orbit the skyline,
-or drop to street level and walk. Open it at `http://localhost:5173/slice.html` under `npm run dev`;
-`npm run single` also writes `dist/cyberpunk-city-skyline.html`.
+- `src/city/model.ts`: the city simulation. Pure, DOM-free, plain-JSON state. Balance numbers live here.
+- `src/city/architect.ts`: the Architect's rules for what to propose and where.
+- `src/city/main.ts`: game shell: brief flow, HUD, keeping the 3D city in step with the simulation.
+- `src/slice/city.ts`: generates a city block from a seed and a style. The same seed gives the same
+  lots, so growing a district makes its existing towers taller.
+- `src/slice/stage.ts`: the shared 3D stage: sky, haze, streets, traffic, rain, cameras, glow.
+- `tests/city.test.ts`: rules, plus two scripted players who only approve the Architect's proposals
+  and must end with a thriving level-4 city (`VITE_BOT_LOG=1 npm test` prints their progress).
+- `scripts/cityplay.mjs`, `sliceshots.mjs`, `playtest.mjs`: drive each built page in headless
+  Chromium and save screenshots.
 
 ## Not built yet
 
-Fog of war, sound, multiplayer and alliances, a rival that runs a real economy, more maps.
+Policy, citizens with opinions and the autonomy dial (#2); rivals, doctrine and conflict (#3); eras
+and megaprojects (#4); sound; richer building shapes and street life.

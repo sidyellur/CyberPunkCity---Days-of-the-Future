@@ -10,31 +10,35 @@ export const EXTENT = BLOCKS * PITCH;
 export const ORIGIN = -EXTENT / 2;
 export const GROUND_TILES = 78;
 
-export type IntentKey = 'efficient' | 'balanced' | 'green';
-export interface Intent {
-  label: string;
-  blurb: string;
+export type Character = 'efficient' | 'balanced' | 'green';
+export type IntentKey = Character; // the slice's three briefs are the three characters
+
+/** How the Architect dresses a block. Game intents and slice characters both reduce to one of these. */
+export interface BlockStyle {
   height: number;
-  park: number;
+  park: number; // chance that a lot becomes green space
   signs: number;
   palette: number[];
   windows: number[]; // indexes into the window texture set
+  lots?: 1 | 2 | 4; // force how the block is carved up
+  slim?: number; // extra taper per setback, for needle towers
 }
 
-const CYAN = 0x2ee6ff, MAGENTA = 0xff3d8b, AMBER = 0xffb347, VIOLET = 0xa06bff, GREEN = 0x4dffa6, ICE = 0xbfe9ff;
+export const CYAN = 0x2ee6ff, MAGENTA = 0xff3d8b, AMBER = 0xffb347, VIOLET = 0xa06bff, GREEN = 0x4dffa6, ICE = 0xbfe9ff, ORANGE = 0xff7a3d;
 
-export const INTENTS: Record<IntentKey, Intent> = {
+export interface CharacterDef { label: string; blurb: string; style: BlockStyle }
+export const INTENTS: Record<Character, CharacterDef> = {
   efficient: {
     label: 'Dense', blurb: 'Maximum floor area. Taller, tighter, colder.',
-    height: 1.3, park: 0, signs: 0.75, palette: [CYAN, ICE, AMBER, CYAN], windows: [1, 1, 3, 0],
+    style: { height: 1.3, park: 0, signs: 0.75, palette: [CYAN, ICE, AMBER, CYAN], windows: [1, 1, 3, 0] },
   },
   balanced: {
     label: 'Balanced', blurb: 'Commerce, housing and light in equal measure.',
-    height: 1, park: 0.07, signs: 1, palette: [CYAN, MAGENTA, AMBER, VIOLET], windows: [0, 1, 2, 3],
+    style: { height: 1, park: 0.07, signs: 1, palette: [CYAN, MAGENTA, AMBER, VIOLET], windows: [0, 1, 2, 3] },
   },
   green: {
     label: 'Green', blurb: 'Lower skyline, open ground, room to breathe.',
-    height: 0.68, park: 0.3, signs: 0.5, palette: [GREEN, CYAN, AMBER, GREEN], windows: [0, 0, 1, 3],
+    style: { height: 0.68, park: 0.3, signs: 0.5, palette: [GREEN, CYAN, AMBER, GREEN], windows: [0, 0, 1, 3] },
   },
 };
 
@@ -198,6 +202,9 @@ export function createShared(): Shared {
     [['#bfe9ff', '#9fe9ff', '#ffffff'], 0.5], // cool offices
     [['#ff9cc4', '#ffd9a0', '#c9adff'], 0.36], // pink nightlife
     [['#c9adff', '#9fe9ff', '#ffd9a0'], 0.4], // violet
+    [['#7dffb8', '#c8ffd8', '#ff9cc4'], 0.78], // grow-lights (vertical farms)
+    [['#ff9a50', '#ffd9a0', '#ff5a4d'], 0.2], // industrial
+    [['#9ff6ff', '#ffffff', '#2ee6ff'], 0.88], // reactor halls
   ];
   const windows = sets.map(([hues, lit]) => {
     const map = windowTexture(rng, hues, lit);
@@ -263,7 +270,7 @@ function colorBox(w: number, h: number, d: number, x: number, y: number, z: numb
 interface Section { w: number; d: number; cx: number; cz: number; y0: number; h: number }
 
 export interface Structure {
-  group: THREE.Group | null; // null for parks
+  group: THREE.Group | null; // null for green space
   holo: THREE.LineSegments | null;
   height: number;
   x: number;
@@ -273,24 +280,27 @@ export interface Structure {
   color: THREE.Color;
   start: number;
   rise: number;
+  /** Fraction already standing when the rise begins (an existing tower growing taller). */
+  from: number;
   p: number;
   done: boolean;
-  trees: [number, number]; // range in the tree instance buffer
+  trees: [number, number]; // range in the block's tree instances
 }
 
-export interface District {
+export interface Block {
+  bx: number;
+  bz: number;
   root: THREE.Group;
   structures: Structure[];
-  spire: Structure;
-  spireTop: number;
   decals: THREE.InstancedMesh;
   trees: THREE.InstancedMesh;
   treeBase: THREE.Matrix4[];
-  tallest: number;
-  dispose: () => void;
 }
 
-function buildTower(sections: Section[], rng: () => number, shared: Shared, bodyMat: THREE.Material, accent: THREE.Color, intent: Intent, isSpire: boolean) {
+export const blockCenter = (bx: number, bz: number) => ({ x: ORIGIN + (bx + 0.5) * PITCH, z: ORIGIN + (bz + 0.5) * PITCH });
+export const MID = (BLOCKS - 1) / 2;
+
+function buildTower(sections: Section[], rng: () => number, shared: Shared, bodyMat: THREE.Material, accent: THREE.Color, signDensity: number, isSpire: boolean) {
   const body: THREE.BufferGeometry[] = [], neon: THREE.BufferGeometry[] = [], edges: THREE.BufferGeometry[] = [];
   const uo = Math.floor(rng() * COLS) / COLS, vo = Math.floor(rng() * ROWS) / ROWS;
   const bright = accent.clone().multiplyScalar(1.9);
@@ -321,12 +331,10 @@ function buildTower(sections: Section[], rng: () => number, shared: Shared, body
     neon.push(colorBox(1.6, 1.6, 1.6, last.cx, height + ah, last.cz, new THREE.Color(0xff3030).multiplyScalar(2.2)));
     height += ah;
   }
-  const bodyMesh = new THREE.Mesh(mergeGeometries(body), bodyMat);
-  const neonMesh = new THREE.Mesh(mergeGeometries(neon), shared.neon);
-  group.add(bodyMesh, neonMesh);
+  group.add(new THREE.Mesh(mergeGeometries(body), bodyMat), new THREE.Mesh(mergeGeometries(neon), shared.neon));
 
   // Signs.
-  const count = isSpire ? 0 : Math.floor(rng() * 4.6 * intent.signs);
+  const count = isSpire ? 0 : Math.floor(rng() * 4.6 * signDensity);
   for (let i = 0; i < count; i++) {
     const s = shared.signs[Math.floor(rng() * shared.signs.length)];
     const sec = rng() < 0.6 ? base : sections[Math.floor(rng() * sections.length)];
@@ -335,19 +343,17 @@ function buildTower(sections: Section[], rng: () => number, shared: Shared, body
     const sw = (s.vertical ? 5 + rng() * 3 : 14 + rng() * 10) * big;
     const sh = s.vertical ? sw * 4 : sw * 0.4;
     const y = low ? 8 + sh / 2 + rng() * 10 : sec.y0 + sec.h - sh / 2 - 3 - rng() * Math.max(0, sec.h - sh - 12) * 0.4;
-    if (y - sh / 2 < sec.y0 + 4 && !low) continue;
+    const face = Math.floor(rng() * 4), along = rng() - 0.5;
+    if (y - sh / 2 < sec.y0 + 4 || y + sh / 2 > sec.y0 + sec.h + 2) continue;
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), s.mat);
-    const face = Math.floor(rng() * 4);
     const off = s.vertical ? 0.8 + sw / 2 : 0.6;
     if (face < 2) {
       const sign = face === 0 ? 1 : -1;
-      const along = (rng() - 0.5) * Math.max(0, sec.w - sw - 2);
-      mesh.position.set(sec.cx + along, y, sec.cz + sign * (sec.d / 2 + off));
+      mesh.position.set(sec.cx + along * Math.max(0, sec.w - sw - 2), y, sec.cz + sign * (sec.d / 2 + off));
       if (s.vertical) mesh.rotation.y = Math.PI / 2; else if (sign < 0) mesh.rotation.y = Math.PI;
     } else {
       const sign = face === 2 ? 1 : -1;
-      const along = (rng() - 0.5) * Math.max(0, sec.d - sw - 2);
-      mesh.position.set(sec.cx + sign * (sec.w / 2 + off), y, sec.cz + along);
+      mesh.position.set(sec.cx + sign * (sec.w / 2 + off), y, sec.cz + along * Math.max(0, sec.d - sw - 2));
       mesh.rotation.y = s.vertical ? 0 : (sign * Math.PI) / 2;
     }
     group.add(mesh);
@@ -358,117 +364,170 @@ function buildTower(sections: Section[], rng: () => number, shared: Shared, body
   return { group, holo, height };
 }
 
-export function generateDistrict(seed: number, intentKey: IntentKey, shared: Shared): District {
-  const rng = mulberry(seed);
-  const intent = INTENTS[intentKey];
+const scratch = new THREE.Matrix4();
+const maxDist = Math.hypot(MID, MID) * PITCH;
+
+/**
+ * Design one city block. The same seed always yields the same lots, footprints and signage, so
+ * rebuilding a block with a taller style grows the towers that were already there.
+ * `falloff` makes blocks shorter toward the edge of the district (used by the slice's skyline).
+ */
+export function buildBlock(shared: Shared, bx: number, bz: number, seed: number, style: BlockStyle, falloff = true): Block {
+  const rng = mulberry(seed * 9973 + bx * 131 + bz * 17 + 5);
   const root = new THREE.Group();
   const structures: Structure[] = [];
-  const mid = (BLOCKS - 1) / 2;
-  const maxDist = Math.hypot(mid, mid) * PITCH;
-  const treeMats: THREE.Matrix4[] = [];
+  const treeBase: THREE.Matrix4[] = [];
   const treeColors: THREE.Color[] = [];
-  const m = new THREE.Matrix4();
+  const { x: cx, z: cz } = blockCenter(bx, bz);
+  const inner = BLOCK - 8; // pavement all round
 
-  for (let bz = 0; bz < BLOCKS; bz++) {
-    for (let bx = 0; bx < BLOCKS; bx++) {
-      if (bx === mid && bz === mid) continue; // the Architect's plaza
-      const cx = ORIGIN + (bx + 0.5) * PITCH, cz = ORIGIN + (bz + 0.5) * PITCH;
-      const inner = BLOCK - 8; // pavement all round
-      // Carve the block into 1, 2 or 4 lots.
-      const roll = rng();
-      const lots: [number, number, number, number][] = [];
-      if (roll < 0.22) lots.push([cx, cz, inner, inner]);
-      else if (roll < 0.58) {
-        const alongX = rng() < 0.5, split = 0.38 + rng() * 0.24;
-        const a = inner * split - 2, b = inner * (1 - split) - 2;
-        if (alongX) lots.push([cx - inner / 2 + a / 2, cz, a, inner], [cx + inner / 2 - b / 2, cz, b, inner]);
-        else lots.push([cx, cz - inner / 2 + a / 2, inner, a], [cx, cz + inner / 2 - b / 2, inner, b]);
-      } else {
-        const h = inner / 2 - 2;
-        for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) lots.push([cx + (sx * inner) / 4, cz + (sz * inner) / 4, h, h]);
-      }
-      for (const [lx, lz, lw, ld] of lots) {
-        const dist = Math.hypot(lx, lz);
-        const accent = new THREE.Color(intent.palette[Math.floor(rng() * intent.palette.length)]);
-        const base: Omit<Structure, 'group' | 'holo' | 'height' | 'trees'> = {
-          x: lx, z: lz, radius: Math.max(lw, ld) / 2, dist, color: accent, start: 0, rise: 0, p: 0, done: false,
-        };
-        if (rng() < intent.park) {
-          const first = treeMats.length;
-          const n = Math.round((lw * ld) / 55);
-          for (let i = 0; i < n; i++) {
-            const s = 2.2 + rng() * 2.6;
-            m.makeScale(s, s * (1.1 + rng() * 0.8), s).setPosition(lx + (rng() - 0.5) * (lw - 4), s * 0.9, lz + (rng() - 0.5) * (ld - 4));
-            treeMats.push(m.clone());
-            treeColors.push(new THREE.Color().setHSL(0.36 + rng() * 0.12, 0.85, 0.32 + rng() * 0.2));
-          }
-          structures.push({ ...base, group: null, holo: null, height: 8, color: new THREE.Color(GREEN), trees: [first, treeMats.length] });
-          continue;
-        }
-        // Height: taller toward the centre, with the odd landmark.
-        const fall = 1.2 - 0.62 * (dist / maxDist);
-        let H = (55 + rng() * 130) * fall * intent.height;
-        if (rng() < 0.08) H *= 1.55;
-        const count = 1 + Math.floor(rng() * 3.6);
-        const sections: Section[] = [];
-        let w = lw, d = ld, sx = lx, sz = lz, y0 = 0;
-        for (let i = 0; i < count; i++) {
-          const h = i === count - 1 ? H - y0 : (H - y0) * (0.3 + rng() * 0.35);
-          sections.push({ w, d, cx: sx, cz: sz, y0, h });
-          y0 += h;
-          const nw = w * (0.68 + rng() * 0.2), nd = d * (0.68 + rng() * 0.2);
-          sx += (rng() - 0.5) * (w - nw); sz += (rng() - 0.5) * (d - nd);
-          w = nw; d = nd;
-        }
-        const mat = shared.windows[intent.windows[Math.floor(rng() * intent.windows.length)]];
-        const t = buildTower(sections, rng, shared, mat, accent, intent, false);
-        structures.push({ ...base, ...t, trees: [0, 0] });
-      }
-    }
+  // Carve the block into 1, 2 or 4 lots.
+  const roll = rng(), alongX = rng() < 0.5, split = 0.38 + rng() * 0.24;
+  const n = style.lots ?? (roll < 0.22 ? 1 : roll < 0.58 ? 2 : 4);
+  const lots: [number, number, number, number][] = [];
+  if (n === 1) lots.push([cx, cz, inner, inner]);
+  else if (n === 2) {
+    const a = inner * split - 2, b = inner * (1 - split) - 2;
+    if (alongX) lots.push([cx - inner / 2 + a / 2, cz, a, inner], [cx + inner / 2 - b / 2, cz, b, inner]);
+    else lots.push([cx, cz - inner / 2 + a / 2, inner, a], [cx, cz + inner / 2 - b / 2, inner, b]);
+  } else {
+    const h = inner / 2 - 2;
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) lots.push([cx + (sx * inner) / 4, cz + (sz * inner) / 4, h, h]);
   }
 
-  // The Architect's spire in the central plaza.
-  const spireSections: Section[] = [];
-  let y0 = 0, w = 46;
-  for (const h of [70, 110, 130, 110, 70]) { spireSections.push({ w, d: w, cx: 0, cz: 0, y0, h }); y0 += h; w *= 0.7; }
-  const sp = buildTower(spireSections, rng, shared, shared.spire, new THREE.Color(CYAN), intent, true);
-  const spire: Structure = { ...sp, x: 0, z: 0, radius: 23, dist: 0, color: new THREE.Color(CYAN), start: 0, rise: 9, p: 0, done: false, trees: [0, 0] };
+  for (const [lx, lz, lw, ld] of lots) {
+    // Every random draw below happens for every lot, whatever the style, so layouts stay stable.
+    const r = Array.from({ length: 8 }, rng);
+    const lotRng = mulberry(Math.floor(r[7] * 1e9));
+    const dist = Math.hypot(lx, lz);
+    const accent = new THREE.Color(style.palette[Math.floor(r[0] * style.palette.length)]);
+    const base = { x: lx, z: lz, radius: Math.max(lw, ld) / 2, dist, start: 0, rise: 0, from: 0, p: 0, done: false };
+    if (r[1] < style.park) {
+      const first = treeBase.length;
+      const count = Math.round((lw * ld) / 55);
+      for (let i = 0; i < count; i++) {
+        const s = 2.2 + lotRng() * 2.6;
+        scratch.makeScale(s, s * (1.1 + lotRng() * 0.8), s).setPosition(lx + (lotRng() - 0.5) * (lw - 4), s * 0.9, lz + (lotRng() - 0.5) * (ld - 4));
+        treeBase.push(scratch.clone());
+        treeColors.push(new THREE.Color().setHSL(0.36 + lotRng() * 0.12, 0.85, 0.32 + lotRng() * 0.2));
+      }
+      structures.push({ ...base, group: null, holo: null, height: 8, color: new THREE.Color(GREEN), trees: [first, treeBase.length] });
+      continue;
+    }
+    const fall = falloff ? 1.2 - 0.62 * (dist / maxDist) : 1;
+    let H = (55 + r[2] * 130) * fall * style.height;
+    if (r[3] < 0.08) H *= 1.55;
+    H = Math.max(14, H);
+    const count = 1 + Math.floor(r[4] * 3.6);
+    const sections: Section[] = [];
+    let w = lw, d = ld, sx = lx, sz = lz, y0 = 0;
+    for (let i = 0; i < count; i++) {
+      const h = i === count - 1 ? H - y0 : (H - y0) * (0.3 + lotRng() * 0.35);
+      sections.push({ w, d, cx: sx, cz: sz, y0, h });
+      y0 += h;
+      const taper = style.slim ?? 0;
+      const nw = w * (0.68 + lotRng() * 0.2 - taper), nd = d * (0.68 + lotRng() * 0.2 - taper);
+      sx += (lotRng() - 0.5) * (w - nw); sz += (lotRng() - 0.5) * (d - nd);
+      w = nw; d = nd;
+    }
+    const mat = shared.windows[style.windows[Math.floor(r[5] * style.windows.length)]];
+    const t = buildTower(sections, lotRng, shared, mat, accent, style.signs, false);
+    structures.push({ ...base, ...t, color: accent, trees: [0, 0] });
+  }
 
-  for (const s of [...structures, spire]) {
+  for (const s of structures) {
     if (s.group) { s.group.visible = false; root.add(s.group); }
     if (s.holo) { s.holo.visible = false; root.add(s.holo); }
   }
 
-  // Build order: outward from the spire.
-  structures.sort((a, b) => a.dist + (a.x * 0.013 + a.z * 0.007) - (b.dist + (b.x * 0.013 + b.z * 0.007)));
-
   // Coloured light spilling onto the street around each tower.
-  const decalGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   const decalMat = new THREE.MeshBasicMaterial({
     map: shared.sprite, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.32,
     polygonOffset: true, polygonOffsetFactor: -4, toneMapped: false,
   });
-  const decals = new THREE.InstancedMesh(decalGeo, decalMat, structures.length);
-  structures.forEach((s, i) => { decals.setMatrixAt(i, m.makeScale(0, 0, 0)); decals.setColorAt(i, s.color); });
+  const decals = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), decalMat, structures.length);
+  structures.forEach((s, i) => { decals.setMatrixAt(i, scratch.makeScale(0, 0, 0)); decals.setColorAt(i, s.color); });
+  decals.frustumCulled = false;
   root.add(decals);
 
-  const treeGeo = new THREE.IcosahedronGeometry(1, 1);
   const treeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x1f7a52, emissiveIntensity: 0.55, roughness: 0.9, flatShading: true });
-  const trees = new THREE.InstancedMesh(treeGeo, treeMat, Math.max(1, treeMats.length));
-  treeMats.forEach((_, i) => { trees.setMatrixAt(i, m.makeScale(0, 0, 0)); trees.setColorAt(i, treeColors[i]); });
-  trees.count = treeMats.length;
+  const trees = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), treeMat, Math.max(1, treeBase.length));
+  treeBase.forEach((_, i) => { trees.setMatrixAt(i, scratch.makeScale(0, 0, 0)); trees.setColorAt(i, treeColors[i]); });
+  trees.count = treeBase.length;
+  trees.frustumCulled = false;
   root.add(trees);
 
-  const tallest = Math.max(...structures.map(s => s.height));
+  return { bx, bz, root, structures, decals, trees, treeBase };
+}
+
+export function disposeBlock(block: Block): void {
+  block.root.traverse(o => {
+    const mesh = o as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    if (o instanceof THREE.LineSegments) (o.material as THREE.Material).dispose();
+  });
+  (block.decals.material as THREE.Material).dispose();
+  (block.trees.material as THREE.Material).dispose();
+}
+
+/** The Architect's spire, for the central plaza. */
+export function buildSpire(shared: Shared): { structure: Structure; top: number } {
+  const rng = mulberry(31337);
+  const sections: Section[] = [];
+  let y0 = 0, w = 46;
+  for (const h of [70, 110, 130, 110, 70]) { sections.push({ w, d: w, cx: 0, cz: 0, y0, h }); y0 += h; w *= 0.7; }
+  const sp = buildTower(sections, rng, shared, shared.spire, new THREE.Color(CYAN), 0, true);
+  sp.group.visible = false; sp.holo.visible = false;
   return {
-    root, structures, spire, spireTop: sp.height, decals, trees, treeBase: treeMats, tallest,
-    dispose: () => {
-      root.traverse(o => {
-        const mesh = o as THREE.Mesh;
-        if (mesh.geometry) mesh.geometry.dispose();
-        if (o instanceof THREE.LineSegments) (o.material as THREE.Material).dispose();
-      });
-      decalMat.dispose(); treeMat.dispose();
-    },
+    structure: { ...sp, x: 0, z: 0, radius: 23, dist: 0, color: new THREE.Color(CYAN), start: 0, rise: 9, from: 0, p: 0, done: false, trees: [0, 0] },
+    top: sp.height,
   };
+}
+
+const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+const vec = new THREE.Vector3();
+
+/**
+ * Advance one structure's build animation to time `now`: first a flickering hologram of the plan,
+ * then the tower rising out of the ground. `block` is null for the spire.
+ */
+export function animateStructure(block: Block | null, s: Structure, index: number, now: number): void {
+  if (s.done) return;
+  const plan = s.start - 1.6;
+  if (now < plan) return;
+  if (now < s.start) {
+    if (s.holo) {
+      s.holo.visible = true;
+      (s.holo.material as THREE.LineBasicMaterial).opacity = 0.75 * ((now - plan) / 1.6) * (0.75 + 0.25 * Math.sin(now * 40 + index));
+    }
+    if (s.from > 0) show(block, s, index, s.from);
+    return;
+  }
+  const k = Math.min(1, (now - s.start) / s.rise);
+  const p = s.from + (1 - s.from) * ease(k);
+  show(block, s, index, p);
+  if (s.holo) {
+    s.holo.visible = k < 1;
+    (s.holo.material as THREE.LineBasicMaterial).opacity = 0.75 * (1 - k);
+  }
+  if (k >= 1) s.done = true;
+}
+
+function show(block: Block | null, s: Structure, index: number, p: number): void {
+  s.p = p;
+  if (s.group) {
+    s.group.visible = true;
+    s.group.position.y = -(s.height + 3) * (1 - p);
+  }
+  if (!block) return;
+  const r = s.radius * 3.4 * p;
+  block.decals.setMatrixAt(index, scratch.makeScale(r, 1, r).setPosition(s.x, 0.12, s.z));
+  block.decals.instanceMatrix.needsUpdate = true;
+  for (let t = s.trees[0]; t < s.trees[1]; t++) {
+    const base = block.treeBase[t];
+    scratch.copy(base).scale(vec.set(p, p, p));
+    scratch.elements[13] = base.elements[13] * p;
+    block.trees.setMatrixAt(t, scratch);
+    block.trees.instanceMatrix.needsUpdate = true;
+  }
 }
