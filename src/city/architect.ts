@@ -4,6 +4,7 @@ import {
   CityState, Intent, Character, Cost, SIZE, CENTRE, INTENTS, MAX_LEVEL, ARCHITECT_UPS,
   briefCost, canAfford, neighbours, siteXY,
 } from './model';
+import { threatSummary } from './conflict';
 
 export interface Advice {
   kind: 'brief' | 'grow' | 'upgrade' | 'wait';
@@ -84,9 +85,22 @@ export function advise(s: CityState): Advice {
     return { kind: 'upgrade', site: CENTRE, cost: up.cost, affordable: canAfford(s, up.cost), title: `Upgrade the Architect to level ${s.architect + 1}`, reason };
   };
   const used = s.districts.filter(d => d).length;
+  // Defence: one district before the rivals move, more whenever a raid could get through.
+  const defend = (): Advice | null => {
+    const war = s.war;
+    if (!war || war.over || s.architect < 2) return null;
+    const have = s.districts.filter(d => d?.intent === 'defence').length;
+    const t = threatSummary(s, war);
+    const worst = t.rivals.find(x => x.threat === 'severe') ?? t.rivals.find(x => x.threat === 'high');
+    if (worst) return meet(s, 'defence', `${worst.name} could get through our defences.`, true);
+    // Keep the walls growing with the city, even while nobody is at the gate.
+    if (have < s.architect + 1) return meet(s, 'defence', have ? 'Our defences should grow with the city.' : 'The rival cities will not stay quiet. We should be ready.', true);
+    return null;
+  };
   const checks: (() => Advice | null)[] = [
     () => (r.income.food < 0.3 || foodSeconds < 180 ? meet(s, 'farms', r.starving ? 'People are going hungry.' : 'Food stores are running down.', true) : null),
     () => (r.powerRatio < 1 ? meet(s, 'power', 'The grid is in brownout. Output is down across the city.', true) : r.powerSupply - r.powerDemand < 8 ? meet(s, 'power', 'The grid has almost no headroom.', true) : null),
+    defend,
     () => (s.morale < 48 || r.moraleTarget < 48 ? meet(s, 'park', 'Morale is slipping. People need room to breathe.', true) : null),
     () => (s.architect >= 2 && s.districts.filter(d => d?.intent === 'research').length < s.architect ? proposeBrief(s, 'research', 'I need data to grow further.', true) : null),
     () => (s.citizens >= r.housing * 0.9 ? meet(s, 'housing', 'Homes are nearly full. The city cannot grow.') : null),

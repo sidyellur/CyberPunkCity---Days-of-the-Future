@@ -5,8 +5,7 @@ what the city needs; a superintelligence, the Architect, designs it and raises i
 browser, in 3D, with every tower, sign and street generated in code (no art assets).
 
 The plan is four layers, tracked as issues: building (#1), administration (#2), conflict (#3) and
-eras (#4). **Layers 1 and 2, building and administration, are playable today.** The Layer 3 rules
-engine exists (`src/city/conflict.ts` on the `layer-3-conflict-engine` branch) but is not wired into the game yet.
+eras (#4). **Layers 1 to 3 are playable today**; eras are not built yet.
 
 ## Play
 
@@ -39,7 +38,12 @@ npm run dev        # http://localhost:5173
   trust it less. The Architect also proposes initiatives, some of them efficient and troubling, and
   the city throws up crises with two real choices.
 
-There is no fighting or way to lose yet; that arrives with Layer 3.
+- **Defend, and choose how to fight.** Two rival cities, each run by its own AI, leave you alone for
+  the first few minutes. You never command units: you raise defence districts, fund a fleet, set a
+  posture (Defend, Deter, Raid, All-out) and an objective, and the Architect does the fighting. You
+  can also hack them, or deal with them: truces, trade, gifts, demands, a buyout or a pact. Raids
+  that break through damage districts and wear down the Nexus; at zero the city falls. You win when
+  both rivals have yielded, been absorbed or allied. Choose Peaceful at the start for no rivals.
 
 ## Pages
 
@@ -55,6 +59,10 @@ There is no fighting or way to lose yet; that arrives with Layer 3.
 - `src/city/architect.ts`: the Architect's rules for what to propose and where.
 - `src/city/governance.ts`: Layer 2 rules: groups, policies, trust, autonomy, initiatives, events.
   It writes `state.mods`, which the model reads. `src/city/govhud.ts` is its HUD markup.
+- `src/city/conflict.ts`: Layer 3 rules: rivals, doctrine, fleet, raids, hacking, diplomacy, endings.
+  `src/city/warhud.ts` is its HUD markup.
+- `src/city/engine.ts`: the one entry point: `newGame(seed, mode)` and `tick(state)` run the model,
+  governance and conflict in order.
 - `src/city/main.ts`: game shell: brief flow, HUD, keeping the 3D city in step with the simulation.
 - `src/slice/city.ts`: generates a city block from a seed and a style. The same seed gives the same
   lots, so growing a district makes its existing towers taller.
@@ -67,5 +75,5 @@ There is no fighting or way to lose yet; that arrives with Layer 3.
 
 ## Not built yet
 
-Wiring conflict into the game (#3); eras
+Eras
 and megaprojects (#4); sound; richer building shapes and street life.

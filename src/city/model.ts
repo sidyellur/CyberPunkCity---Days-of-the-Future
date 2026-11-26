@@ -1,6 +1,8 @@
 // Layer 1 city simulation: districts raised by brief, feeding one shared economy.
 // Pure and DOM-free; the state is plain JSON so it can be saved as-is.
 
+import type { ConflictState } from './conflict';
+
 export const SIZE = 9; // blocks per side; the centre block is the Architect's plaza
 export const CENTRE = (SIZE * SIZE - 1) / 2;
 export const DT = 0.1;
@@ -35,8 +37,8 @@ export const INTENTS: Record<Intent, IntentDef> = {
   defence: { name: 'Defence', desc: 'Drone bays and shield grids. Protects the city.', cost: { credits: 200, alloy: 220 }, time: 20, jobs: 20, power: -8, morale: 0, unlock: 2, defence: 10 },
   park: { name: 'Green space', desc: 'Open ground and trees. Lifts morale.', cost: { credits: 80, alloy: 40 }, time: 10, jobs: 0, power: -1, morale: 7, unlock: 1 },
 };
-/** Intents offered in the brief menu. Defence joins once the conflict layer is live. */
-export const INTENT_ORDER: Intent[] = ['housing', 'farms', 'industry', 'commerce', 'power', 'park', 'research'];
+/** Intents offered in the brief menu. Defence is only offered in a city that has rivals. */
+export const INTENT_ORDER: Intent[] = ['housing', 'farms', 'industry', 'commerce', 'power', 'park', 'research', 'defence'];
 
 export interface CharacterDef { name: string; desc: string; out: number; housing: number; jobs: number; draw: number; morale: number; cost: number }
 export const CHARACTERS: Record<Character, CharacterDef> = {
@@ -160,6 +162,8 @@ export interface CityState {
   events: { msg: string; kind: 'info' | 'warn' | 'good' }[];
   gov: GovState;
   mods: Mods;
+  /** Rival cities and the war with them (rules in conflict.ts). Null or absent in a peaceful city. */
+  war?: ConflictState | null;
 }
 
 export function createCity(seed = 1): CityState {
@@ -310,7 +314,7 @@ export function recompute(s: CityState): void {
   r.income = inc;
   r.starving = s.res.food <= 0 && inc.food < 0;
 
-  let target = 60 + Math.max(-30, Math.min(30, moraleTerms + adj / 2)) + mods.morale;
+  let target = 60 + Math.max(-30, Math.min(30, moraleTerms + adj / 2)) + mods.morale + (s.war?.effects.morale ?? 0);
   if (r.starving) target -= 30;
   target -= 30 * (1 - r.powerRatio);
   if (s.citizens > r.housing) target -= 15;
@@ -330,6 +334,9 @@ export const OBJECTIVES: { text: string; done: (s: CityState) => boolean }[] = [
   { text: 'Reach 500 citizens across 14 districts', done: s => s.citizens >= 500 && s.districts.filter(d => d && d.standing).length >= 14 },
   { text: 'Upgrade the Architect to level 4 and reach 1,500 citizens', done: s => s.architect >= 4 && s.citizens >= 1500 },
   { text: 'Hold trust above 65 in a city of 2,000', done: s => s.gov.trust >= 65 && s.citizens >= 2000 },
+  // The last two only apply when the city has rivals; a peaceful city skips them.
+  { text: 'Raise a defence district before the rival cities move', done: s => !s.war || standing(s, 'defence') > 0 },
+  { text: 'Neutralise both rival cities by force, hacking or diplomacy', done: s => !s.war || s.war.over === 'win' },
 ];
 function standing(s: CityState, intent: Intent): number {
   return s.districts.filter(d => d && d.intent === intent && d.standing > 0).length;

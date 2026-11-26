@@ -133,6 +133,19 @@ button.x { padding: 3px 8px; }
 .alert { padding: 6px 9px; border: 1px solid var(--bad); color: #ffb0b0; background: rgba(255, 107, 107, 0.1); }
 .enacted { margin: 0; padding-left: 16px; font-size: 12px; color: var(--dim); }
 
+/* Conflict */
+.headline { font-size: 14px; color: var(--text); }
+.stats { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--text); }
+.rival { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.rival.done { opacity: 0.7; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.grid2 button { text-align: left; padding: 6px 8px; }
+.seg.three button { padding: 7px 3px; font-size: 11px; }
+aside label i { font-style: normal; color: var(--amber); letter-spacing: 0; text-transform: none; }
+button.link { padding: 1px 6px; font-size: 11px; }
+[hidden] { display: none !important; }
+
 #hint { align-self: center; margin: 8px 0 calc(10px + env(safe-area-inset-bottom, 0px)); padding: 5px 12px; color: var(--dim); background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.08); font-size: 12px; text-align: center; max-width: calc(100% - 24px); transition: opacity 0.6s; }
 #hint:empty { display: none; }
 #hint.fade { opacity: 0; }

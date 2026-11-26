@@ -64,6 +64,24 @@ await page.click('[data-act="continue"]');
 const after = await summary(page);
 console.log('reloaded', JSON.stringify(after), after.districts === before.districts ? 'save ok' : 'SAVE MISMATCH');
 
+// War: a city with rivals. Jump past the quiet opening, then use the Defence panel.
+await page.evaluate(() => { const c = window.__city; c.start(5, 'normal'); const s = c.state; s.res = { credits: 50000, alloy: 50000, food: 50000, data: 5000 }; s.architect = 2; });
+for (let i = 0; i < 30; i++) await page.evaluate(() => { const c = window.__city; c.run(20); c.approve(); });
+await page.click('#war');
+await press(page, '[data-act="posture"][data-k="deter"]');
+await press(page, '[data-act="fleet"][data-o="10"]');
+await press(page, '[data-act="objective"][data-k="breakIndustry"][data-r="meridian"]');
+await press(page, '[data-act="op"][data-k="blind"][data-r="karst"]');
+await press(page, '[data-act="offer"][data-k="tribute"][data-r="meridian"]');
+await page.evaluate(() => window.__city.run(30));
+await shot(page, '11-defence');
+console.log('war', JSON.stringify(await page.evaluate(() => { const s = window.__city.state, w = s.war; return { t: Math.round(s.time), posture: w.posture, objective: w.objective, fleet: Math.round(w.fleet), defence: Math.round(s.rates.defence), nexus: Math.round(w.nexus), karstBlind: w.rivals.karst.blind > 0, meridianRelations: Math.round(w.rivals.meridian.relations), raids: w.stats.raids }; })));
+// Losing: the Nexus falls, the end screen appears and the city stops.
+await page.evaluate(() => { const c = window.__city, s = c.state; for (let i = 0; i < 81; i++) if (s.districts[i]?.intent === 'defence') s.districts[i] = null; s.war.fleet = 0; s.war.nexus = 3; for (const r of Object.values(s.war.rivals)) { r.strength = 400; r.relations = -90; r.raidIn = 1; r.truce = 0; } c.run(400); });
+await page.waitForTimeout(1500);
+await shot(page, '12-end');
+console.log('ended', JSON.stringify(await page.evaluate(() => ({ over: window.__city.state.war.over, overlay: document.querySelector('#overlay').className, title: document.querySelector('#overlay h1')?.textContent }))));
+
 const phone = await open('phone', { width: 390, height: 844 }, true);
 await phone.tap('[data-act="new"]');
 await phone.evaluate(() => window.__city.start(5));

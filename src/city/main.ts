@@ -3,11 +3,14 @@ import './game.css';
 import * as THREE from 'three';
 import {
   CityState, Intent, Character, Cost, ResKey, SIZE, CENTRE, DT, INTENTS, INTENT_ORDER, CHARACTERS, CHARACTER_ORDER, MAX_LEVEL,
-  ARCHITECT_UPS, OBJECTIVES, PolicyKey, createCity, recompute, brief, grow, clearSite, upgradeArchitect, briefCost, briefTime,
+  ARCHITECT_UPS, OBJECTIVES, PolicyKey, recompute, brief, grow, clearSite, upgradeArchitect, briefCost, briefTime,
   districtStats, adjacency, canAfford, currentObjective,
 } from './model';
 import { advise, Advice } from './architect';
-import { tick, setPolicy, setAutonomy, decide } from './governance';
+import { setPolicy, setAutonomy, decide } from './governance';
+import { tick, newGame, isLost, Mode } from './engine';
+import { setPosture, setObjective, commissionFleet, standDownFleet, launchOperation, propose, Posture, Op, Offer, Objective, RivalId } from './conflict';
+import { warHtml, threatChip, endHtml } from './warhud';
 import { governHtml, pendingHtml } from './govhud';
 import {
   Block, BlockStyle, Structure, BLOCK, PITCH, ORIGIN, AMBER, MAGENTA, CYAN, VIOLET, GREEN, ICE, ORANGE,
@@ -62,16 +65,20 @@ function boot(st: NonNullable<typeof stage>): void {
   scene.add(spire.structure.group!, spire.structure.holo!);
   animateStructure(null, spire.structure, -1, 0);
 
-  let state: CityState = createCity(1);
+  let state: CityState = newGame(1, 'peace');
+  let mode: Mode = 'normal';
   let running = false;
   let paused = false;
   let speed = 1;
-  let overlay: 'intro' | 'menu' | null = 'intro';
+  let overlay: 'intro' | 'menu' | 'end' | null = 'intro';
+  /** The war outcome the player has already been shown, so the end screen appears once. */
+  let shownOver: string | null = null;
   let selected = -1;
   let hover = -1;
   let draft: { intent: Intent; character: Character } = { intent: 'housing', character: 'balanced' };
   let confirmClear = false;
   let governing = false;
+  let warring = false;
   let advice: Advice = advise(state);
 
   // ---------- 3D districts ----------
@@ -230,7 +237,7 @@ function boot(st: NonNullable<typeof stage>): void {
       <div class="chip ${state.citizens >= r.housing ? 'warn' : ''}" title="Citizens / homes"><b>POP</b><span>${fmt(state.citizens)}/${fmt(r.housing)}</span></div>
       <div class="chip" title="Workers employed / workforce"><b>JOBS</b><span>${fmt(r.employed)}/${fmt(r.workers)}</span></div>
       <div class="chip ${state.morale < 35 ? 'bad' : ''}" title="Morale drives output and growth"><b>MOR</b><span>${Math.round(state.morale)}%</span></div>
-      <div class="chip ${state.gov.trust < 30 ? 'bad' : ''}" title="Trust in the Architect, and in you"><b>TRUST</b><span>${Math.round(state.gov.trust)}</span></div>`;
+      <div class="chip ${state.gov.trust < 30 ? 'bad' : ''}" title="Trust in the Architect, and in you"><b>TRUST</b><span>${Math.round(state.gov.trust)}</span></div>${threatChip(state)}`;
   }
 
   function architectHtml(): string {
@@ -274,7 +281,7 @@ function boot(st: NonNullable<typeof stage>): void {
     }
     const d = state.districts[selected];
     if (!d) {
-      const intents = INTENT_ORDER.map(k => {
+      const intents = INTENT_ORDER.filter(k => k !== 'defence' || state.war).map(k => {
         const def = INTENTS[k], locked = def.unlock > state.architect;
         return `<button data-act="intent" data-k="${k}" class="intent ${draft.intent === k ? 'on' : ''} ${locked ? 'off' : ''}">
           <i style="background:${hex(INTENT_COLOR[k])}"></i>${def.name}<small>${locked ? `Architect level ${def.unlock}` : costHtml(briefCost(k, draft.character, 1))}</small></button>`;
@@ -310,7 +317,8 @@ function boot(st: NonNullable<typeof stage>): void {
       <p class="desc">${def.desc}</p>${status}
       <div class="forecast">${[...statLines(d.intent, d.character, Math.max(1, d.standing || d.level)), ...adj.map(n => `<span class="adj">${n}</span>`)].map(l => `<div>${l}</div>`).join('')}</div>
       ${action}
-      <div class="btns"><button data-act="clear" class="danger">${confirmClear ? 'Confirm: clear this site' : 'Clear site'}</button></div>`;
+      ${d.damage > 0.02 ? `<p class="alert">Damaged: running at ${Math.round((1 - d.damage) * 100)}%. Repairs are under way.</p>` : ''}
+      <div class="btns">${state.war && !state.war.over ? '<button data-act="protect">Protect this district</button>' : ''}<button data-act="clear" class="danger">${confirmClear ? 'Confirm: clear this site' : 'Clear site'}</button></div>`;
   }
 
   const last: Record<string, string> = {};
@@ -329,8 +337,10 @@ function boot(st: NonNullable<typeof stage>): void {
     setHtml('chips', topHtml());
     setHtml('architect', architectHtml());
     // The Govern panel is full of slowly drifting numbers; redraw it once a second so its buttons hold still.
-    if (!governing) setHtml('site', siteHtml());
-    else if (force || performance.now() - govT > 1000) { govT = performance.now(); setHtml('site', governHtml(state)); }
+    if (!governing && !warring) setHtml('site', siteHtml());
+    else if (force || performance.now() - govT > 1000) { govT = performance.now(); setHtml('site', warring ? warHtml(state) : governHtml(state)); }
+    $('war').classList.toggle('on', warring);
+    ($('war') as HTMLElement).hidden = !state.war;
     $('govern').classList.toggle('on', governing);
     $('pause').textContent = paused ? '▶' : '❚❚';
     $('pause').classList.toggle('on', paused);
@@ -342,8 +352,10 @@ function boot(st: NonNullable<typeof stage>): void {
   function overlayHtml(): void {
     const el = $('overlay');
     el.className = overlay ? 'show' : '';
+    if (overlay === 'end') { el.innerHTML = endHtml(state); return; }
     if (overlay === 'intro') {
       const hasSave = !!load();
+      const modes: [Mode, string][] = [['peace', 'Peaceful'], ['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']];
       el.innerHTML = `<div class="card"><h1>CYBERPUNK <span>CITY</span></h1><p class="sub">Days of the Future</p>
         <p class="lede">Two hundred years from now, cities are not built by hand. You decide what the city needs. A superintelligence designs it and raises it.</p>
         <ul><li><b>Brief the Architect.</b> Pick an empty lot, say what should stand there, and watch it rise.</li>
@@ -351,6 +363,8 @@ function boot(st: NonNullable<typeof stage>): void {
         <li><b>Mind the neighbours.</b> Homes beside industry are miserable. Homes beside green space are not.</li>
         <li><b>Build upward.</b> Upgrade the Architect, then grow districts taller.</li>
         <li><b>Govern.</b> Set policy, answer the city's crises, and decide how much the Architect may do without asking. More autonomy is faster. People trust it less.</li></ul>
+        <label>Rival cities</label><div class="seg">${modes.map(([k, n]) => `<button data-act="mode" data-k="${k}" class="${mode === k ? 'on' : ''}">${n}</button>`).join('')}</div>
+        <p class="note">${mode === 'peace' ? 'No rivals. Build and govern in peace.' : 'Two rival cities, each run by its own AI. They leave you alone for the first few minutes. You set doctrine; the Architect fights.'}</p>
         <div class="btns">${hasSave ? '<button data-act="continue" class="primary">Continue your city</button><button data-act="new">Found a new city</button>' : '<button data-act="new" class="primary">Found your city</button>'}</div></div>`;
     } else if (overlay === 'menu') {
       el.innerHTML = `<div class="card"><h1>PAUSED</h1><div class="btns col"><button data-act="resume" class="primary">Resume</button>
@@ -376,7 +390,8 @@ function boot(st: NonNullable<typeof stage>): void {
     raised.clear();
     state = s;
     recompute(state);
-    running = true; paused = false; overlay = null; selected = -1; confirmClear = false; governing = false;
+    running = true; paused = false; overlay = null; selected = -1; confirmClear = false; governing = false; warring = false;
+    shownOver = state.war?.over ?? null;
     sync(true);
     advice = advise(state);
     overlayHtml();
@@ -408,16 +423,33 @@ function boot(st: NonNullable<typeof stage>): void {
         else { confirmClear = false; attempt(clearSite(state, selected)); }
         break;
       case 'close': selected = -1; break;
-      case 'govern': governing = !governing; if (governing) selected = -1; break;
+      case 'govern': governing = !governing; if (governing) { selected = -1; warring = false; } break;
+      case 'war': warring = !warring; if (warring) { selected = -1; governing = false; } break;
+      case 'mode': mode = k as Mode; overlayHtml(); break;
+      case 'posture': warAct(w => setPosture(w, k as Posture)); break;
+      case 'fleet': warAct(w => { const n = Number(el.dataset.o); return n > 0 ? commissionFleet(state, w, n) : standDownFleet(w, -n); }); break;
+      case 'objective': warAct(w => setObjective(state, w, (k === 'none' ? { kind: 'none' } : { kind: k, rival: el.dataset.r as RivalId }) as Objective)); break;
+      case 'protect': if (warAct(w => setObjective(state, w, { kind: 'protect', site: selected }))) toast('The Architect will defend this district first', 'good'); break;
+      case 'op': if (warAct(w => launchOperation(state, w, k as Op, (el.dataset.r as RivalId) ?? null))) toast('Operation launched', 'info'); break;
+      case 'offer': if (warAct(w => propose(state, w, el.dataset.r as RivalId, (k === 'tribute' ? { kind: 'tribute', credits: 500 } : { kind: k }) as Offer))) toast('Message sent', 'info'); break;
       case 'policy': { const err = setPolicy(state, k as PolicyKey, Number(el.dataset.o)); if (err) toast(err, 'warn'); break; }
       case 'autonomy': setAutonomy(state, Number(el.dataset.o)); break;
       case 'decide': { const err = decide(state, Number(el.dataset.o) as 0 | 1); if (err) toast(err, 'warn'); else sync(); break; }
       case 'resume': overlay = null; overlayHtml(); break;
       case 'rain': st.rain.visible = !st.rain.visible; overlayHtml(); break;
-      case 'new': try { localStorage.removeItem(SAVE_KEY); } catch { /* storage unavailable */ } start(createCity(1 + Math.floor(Math.random() * 9999))); break;
+      case 'new': try { localStorage.removeItem(SAVE_KEY); } catch { /* storage unavailable */ } start(newGame(1 + Math.floor(Math.random() * 9999), mode)); break;
       case 'continue': { const s = load(); if (s) start(s); break; }
     }
     render(true);
+  }
+  /** Run a conflict command, show its refusal reason if any, and pass on whatever the engine reports. */
+  function warAct(fn: (w: NonNullable<CityState['war']>) => string | null): boolean {
+    const w = state.war;
+    if (!w) return false;
+    const err = fn(w);
+    if (err) toast(err, 'warn');
+    for (const ev of w.events.splice(0)) toast(ev.msg, ev.kind);
+    return !err;
   }
   /** Swing the orbit camera to look at a site without changing its distance. */
   function focus(i: number): void {
@@ -440,7 +472,8 @@ function boot(st: NonNullable<typeof stage>): void {
   $('view').addEventListener('click', () => st.setView(!st.walking));
   $('glow').addEventListener('click', () => { st.glow = !st.glow; render(true); });
   $('menu').addEventListener('click', () => { overlay = 'menu'; overlayHtml(); });
-  $('govern').addEventListener('click', () => { governing = !governing; if (governing) selected = -1; render(true); });
+  $('govern').addEventListener('click', () => { governing = !governing; if (governing) { selected = -1; warring = false; } render(true); });
+  $('war').addEventListener('click', () => { warring = !warring; if (warring) { selected = -1; governing = false; } render(true); });
 
   let hintTimer = 0;
   function hint(): void {
@@ -453,7 +486,7 @@ function boot(st: NonNullable<typeof stage>): void {
   }
   st.onView = street => {
     ($('walk-hold') as HTMLElement).hidden = !(street && st.touch);
-    if (street) { selected = -1; governing = false; }
+    if (street) { selected = -1; governing = false; warring = false; }
     for (const [, r] of raised) r.label.visible = !street;
     lotLines.visible = !street;
     hint();
@@ -478,7 +511,7 @@ function boot(st: NonNullable<typeof stage>): void {
     const i = siteAt(e.clientX, e.clientY);
     confirmClear = false;
     selected = i;
-    if (i >= 0) governing = false;
+    if (i >= 0) { governing = false; warring = false; }
     if (i >= 0 && !state.districts[i] && advice.kind === 'brief' && advice.site === i) draft = { intent: advice.intent!, character: advice.character! };
     render(true);
   });
@@ -486,7 +519,7 @@ function boot(st: NonNullable<typeof stage>): void {
     if (e.key === 'Escape') { if (overlay === 'menu') overlay = null; else selected = -1; overlayHtml(); render(true); }
     else if (e.key === ' ' && running && !st.walking) { e.preventDefault(); paused = !paused; render(true); }
   });
-  document.addEventListener('visibilitychange', () => { if (document.hidden && running) save(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && running && !isLost(state)) save(); });
 
   // ---------- Loop ----------
   let prev = performance.now(), acc = 0, saveT = 0, adviceT = 0;
@@ -501,10 +534,20 @@ function boot(st: NonNullable<typeof stage>): void {
       if (acc > DT) acc = 0;
       sync();
       saveT += dt; adviceT += dt;
-      if (saveT > 15) { saveT = 0; save(); }
+      if (saveT > 15 && !isLost(state)) { saveT = 0; save(); }
       if (adviceT > 1) { adviceT = 0; advice = advise(state); }
       for (const ev of state.events.splice(0)) toast(ev.msg, ev.kind);
+      // The war is decided: show the outcome once. A lost city is over; a won one carries on.
+      const over = state.war?.over ?? null;
+      if (over && over !== shownOver) {
+        shownOver = over;
+        overlay = 'end';
+        if (isLost(state)) { try { localStorage.removeItem(SAVE_KEY); } catch { /* storage unavailable */ } } else save();
+        overlayHtml();
+      }
     }
+    // Districts that have been hit show it on their label.
+    for (const [i, r] of raised) (r.label.material as THREE.SpriteMaterial).color.setHex((state.districts[i]?.damage ?? 0) > 0.15 ? 0xff5a4d : 0xffffff);
     // Animate on the simulation clock, interpolated between ticks, so pause and speed apply.
     const clock = state.time + (running && !overlay && !paused ? acc : 0);
     rising.length = 0;
@@ -532,7 +575,7 @@ function boot(st: NonNullable<typeof stage>): void {
 
   (window as unknown as Record<string, unknown>).__city = {
     get state() { return state; },
-    start: (seed = 1) => start(createCity(seed)),
+    start: (seed = 1, m: Mode = 'peace') => start(newGame(seed, m)),
     run: (seconds: number) => { for (let i = 0; i < seconds / DT; i++) tick(state); sync(); advice = advise(state); render(true); },
     approve: () => { const el = document.createElement('i'); el.dataset.act = 'approve'; act(el); },
     select: (i: number) => { selected = i; render(true); },

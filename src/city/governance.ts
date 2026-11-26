@@ -311,7 +311,8 @@ export function stepGovernance(s: CityState, dt: number): void {
 
   // Trust in the Architect, and in you for how you use it.
   g.grievance = Math.max(0, g.grievance - 0.03 * dt);
-  const trustTarget = clamp(52 + (avg - 55) * 0.7 + acc.trust - g.grievance);
+  // War weariness wears on trust too.
+  const trustTarget = clamp(52 + (avg - 55) * 0.7 + acc.trust - g.grievance - (s.war?.effects.unrest ?? 0) * 0.12);
   g.trust += Math.max(-0.8 * dt, Math.min(0.8 * dt, trustTarget - g.trust));
   m.morale += (g.trust - 55) / 6;
   if (g.trust < 30) m.growth *= 0.5;
