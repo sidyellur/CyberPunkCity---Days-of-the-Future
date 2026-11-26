@@ -46,7 +46,7 @@ There is no fighting or way to lose yet; that arrives with Layer 3.
 | Page | What it is |
 | --- | --- |
 | `index.html` | The game (Layer 1). Source in `src/city/`. |
-| `slice.html` | The original visual test: a whole district raised at once, no gameplay. Source in `src/slice/`. |
+| `slice.html` | District 07 in 2250. Orbit Meridian Exchange, view the canal and orbital tether from Overview, or walk through the night market. The Architect can regenerate the showcase in three styles. Source in `src/slice/`. |
 | `classic.html` | The first 2D prototype, with squads and a raiding rival. Source in `src/sim/` and `src/ui/`. Its combat rules are the starting point for Layer 3. |
 
 ## Code
@@ -58,7 +58,8 @@ There is no fighting or way to lose yet; that arrives with Layer 3.
 - `src/city/main.ts`: game shell: brief flow, HUD, keeping the 3D city in step with the simulation.
 - `src/slice/city.ts`: generates a city block from a seed and a style. The same seed gives the same
   lots, so growing a district makes its existing towers taller.
-- `src/slice/stage.ts`: the shared 3D stage: sky, haze, streets, traffic, rain, cameras, glow.
+- `src/slice/stage.ts` supplies the playable city with its 3D stage.
+- `src/slice/district07.ts` generates the showcase district and its landmarks for `slice.html`.
 - `tests/city.test.ts`: rules, plus two scripted players who only approve the Architect's proposals
   and must end with a thriving level-4 city (`VITE_BOT_LOG=1 npm test` prints their progress).
 - `scripts/cityplay.mjs`, `sliceshots.mjs`, `playtest.mjs`: drive each built page in headless
