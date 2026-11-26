@@ -28,7 +28,7 @@ const canvas = $('scene') as HTMLCanvasElement;
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const STREET_FOG = 0x24103f;
 const OVERVIEW_FOG = 0x626f77;
-const OVERVIEW_FOG_DENSITY = 0.00132;
+const OVERVIEW_FOG_DENSITY = 0.00113;
 
 function boot(): void {
   let renderer: THREE.WebGLRenderer;
@@ -93,9 +93,8 @@ function boot(): void {
     }),
   );
   scene.add(sky);
-  const stormSky = createStormSky();
+  const stormSky = createStormSky(haze.color);
   scene.environment = stormSky;
-  scene.backgroundIntensity = 0.88;
 
   // ----- Light: mostly emissive surfaces, with two coloured washes for shape -----
   const ambient = new THREE.HemisphereLight(0x4b3a8c, 0x06070c, 0.9);

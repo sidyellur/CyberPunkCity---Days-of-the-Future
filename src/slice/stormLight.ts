@@ -2,8 +2,9 @@ import * as THREE from 'three';
 
 // Reuse one sky for the backdrop and the environment lighting. Sampling directions
 // on a sphere keeps the cloud field continuous at the panorama seam.
-export function createStormSky() {
+export function createStormSky(horizon: THREE.Color) {
   const width = 768, height = 384;
+  const mist = horizon.clone().convertLinearToSRGB().multiplyScalar(255);
   const pixels = new Uint8Array(width * height * 4);
   const noise = new Float32Array(256 * 256);
   let seed = 703;
@@ -40,11 +41,11 @@ export function createStormSky() {
       const density = clouds(cx, cz);
       const cover = smooth(density, 0.38, 0.68) * smooth(up, 0.014, 0.18) * 0.73;
       const rim = Math.max(0, clouds(cx - 0.32, cz - 0.10) - density);
-      const low = 1 - smooth(up, -0.24, 0.015);
+      const low = 1 - smooth(up, 0.0, 0.115);
       const i = (y * width + x) * 4;
-      pixels[i] = mix(mix(skyR, 44 + rim * 158 + warm * 76, cover), 18, low);
-      pixels[i+1] = mix(mix(skyG, 58 + rim * 122 + warm * 34, cover), 26, low);
-      pixels[i+2] = mix(mix(skyB, 70 + rim * 99 + warm * 12, cover), 31, low);
+      pixels[i] = mix(mix(skyR, 44 + rim * 158 + warm * 76, cover), mist.r, low);
+      pixels[i+1] = mix(mix(skyG, 58 + rim * 122 + warm * 34, cover), mist.g, low);
+      pixels[i+2] = mix(mix(skyB, 70 + rim * 99 + warm * 12, cover), mist.b, low);
       pixels[i+3] = 255;
     }
   }
