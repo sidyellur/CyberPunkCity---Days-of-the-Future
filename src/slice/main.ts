@@ -10,6 +10,11 @@ import {
   BLOCKS, BLOCK, PITCH, ORIGIN, EXTENT, GROUND_TILES, INTENTS, IntentKey, District, Structure,
   createShared, generateDistrict, lampSpots, mulberry,
 } from './city';
+import { STREET_CORNER } from './street';
+import { createTransit } from './transit';
+import { createRetrofit } from './retrofit';
+import { createStreetLife } from './streetLife';
+import { createMarketDisplay } from './marketDisplay';
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $('scene') as HTMLCanvasElement;
@@ -61,6 +66,16 @@ function boot(): void {
 
   const shared = createShared();
   const rng = mulberry(4242);
+  const transit = createTransit();
+  const retrofit = createRetrofit();
+  const streetLife = createStreetLife();
+  const marketDisplay = createMarketDisplay();
+  scene.add(transit.root, streetLife.root);
+  const cornerFeatures = [transit, retrofit, streetLife, marketDisplay];
+  const streetObstacles = [...transit.colliders, ...streetLife.colliders];
+  for (const feature of cornerFeatures) feature.update(0);
+  let cornerTime = 0;
+  let streetEntered = false;
 
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_TILES * PITCH, GROUND_TILES * PITCH).rotateX(-Math.PI / 2), shared.ground);
   scene.add(ground);
@@ -223,15 +238,24 @@ function boot(): void {
   function schedule(d: District, prebuilt: number): void {
     d.structures.forEach((s, i) => {
       s.rise = 5 + (s.height / 60) * 1.4;
-      s.start = i < prebuilt ? -100 : 3.5 + (i - prebuilt) * 0.2;
+      s.start = i < prebuilt || (prebuilt > 0 && s.featured) ? -100 : 3.5 + (i - prebuilt) * 0.2;
     });
     d.spire.start = prebuilt > 0 ? -100 : 0.6;
   }
 
   function raise(newSeed: number, prebuiltShare: number): void {
-    if (district) { scene.remove(district.root); district.dispose(); }
+    if (district) {
+      retrofit.root.removeFromParent();
+      marketDisplay.root.removeFromParent();
+      scene.remove(district.root);
+      district.dispose();
+    }
     seed = newSeed;
     district = generateDistrict(seed, intent, shared);
+    for (const building of district.structures) {
+      if (building.featured === 'apartments') building.group?.add(retrofit.root);
+      if (building.featured === 'market') building.group?.add(marketDisplay.root);
+    }
     schedule(district, Math.floor(district.structures.length * prebuiltShare));
     scene.add(district.root);
     clock = 0;
@@ -322,6 +346,7 @@ function boot(): void {
 
   /** True where a person cannot stand: inside a block's lots, or inside the spire. */
   function blocked(x: number, z: number): boolean {
+    if (streetObstacles.some(c => x > c.minX - 0.3 && x < c.maxX + 0.3 && z > c.minZ - 0.3 && z < c.maxZ + 0.3)) return true;
     if (Math.abs(x) > EXTENT / 2 + 60 || Math.abs(z) > EXTENT / 2 + 60) return true;
     const fx = (((x - ORIGIN) % PITCH) + PITCH) % PITCH - PITCH / 2, fz = (((z - ORIGIN) % PITCH) + PITCH) % PITCH - PITCH / 2;
     const bx = Math.floor((x - ORIGIN) / PITCH), bz = Math.floor((z - ORIGIN) / PITCH);
@@ -340,10 +365,14 @@ function boot(): void {
     if (street) {
       saved.pos.copy(camera.position); saved.target.copy(controls.target);
       controls.autoRotate = false;
-      // An avenue two blocks out, looking back up at the spire.
-      walk.x = ORIGIN + 4 * PITCH; walk.z = ORIGIN + 7 * PITCH - 6; walk.yaw = -0.2; walk.pitch = 0.45;
+      Object.assign(walk, STREET_CORNER.camera);
+      streetEntered = true;
+      bloom.strength = 0.38;
+      bloom.threshold = 0.88;
       camera.fov = 72;
     } else {
+      bloom.strength = 1;
+      bloom.threshold = 0.62;
       camera.position.copy(saved.pos); controls.target.copy(saved.target);
       camera.fov = 50;
     }
@@ -488,6 +517,11 @@ function boot(): void {
     shared.signs[3].mat.opacity = Math.sin(t * 31) > 0.82 || Math.sin(t * 7.3) > 0.93 ? 0.25 : 1;
     shared.signs[8].mat.opacity = Math.sin(t * 23 + 1) > 0.9 ? 0.4 : 1;
 
+    if (!reduced && streetEntered) {
+      cornerTime += dt;
+      const motionTime = Math.max(0, cornerTime - 1.6);
+      for (const feature of cornerFeatures) feature.update(motionTime);
+    }
     if (walking) stepWalk(dt); else controls.update();
 
     // Rain.
@@ -518,7 +552,7 @@ function boot(): void {
   requestAnimationFrame(frame);
 
   (window as unknown as Record<string, unknown>).__slice = {
-    advance: (s: number) => advance(s), setView, camera, controls,
+    advance: (s: number) => advance(s), setView, camera, controls, scene,
     get info() { return { calls: renderer.info.render.calls, tris: renderer.info.render.triangles, structures: district.structures.length }; },
   };
 }

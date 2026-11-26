@@ -1,6 +1,7 @@
 // Procedural district: every tower, sign and street is generated from a seed and an intent.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { createStreetCorner, STREET_CORNER } from './street';
 
 export const BLOCKS = 9;
 export const BLOCK = 64;
@@ -86,6 +87,54 @@ function windowTexture(rng: () => number, hues: string[], lit: number): THREE.Ca
   });
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
+}
+
+function frontageMaterial(residential: boolean): THREE.MeshStandardMaterial {
+  const rng = mulberry(residential ? 2250 : 2251);
+  const map = canvasTexture(256, 512, g => {
+    g.fillStyle = residential ? '#686260' : '#293940';
+    g.fillRect(0, 0, 256, 512);
+    for (let i = 0; i < 9200; i++) {
+      g.fillStyle = i % 2 ? '#22212923' : '#b9bdc417';
+      g.fillRect(rng() * 256, rng() * 512, 1 + rng() * 3, 1 + rng() * 5);
+    }
+  });
+  const emissiveMap = canvasTexture(256, 512, g => {
+    g.fillStyle = '#000';
+    g.fillRect(0, 0, 256, 512);
+  });
+  const body = map.image.getContext('2d') as CanvasRenderingContext2D;
+  const lit = emissiveMap.image.getContext('2d') as CanvasRenderingContext2D;
+  for (let floor = 0; floor < ROWS; floor++) {
+    const y = floor * 32;
+    body.fillStyle = residential ? '#514b47' : '#1a282f';
+    body.fillRect(0, y, 256, 2);
+    for (let column = 0; column < COLS; column++) {
+      const x = column * 32;
+      const width = residential ? (column % 4 === 2 ? 10 : 17) : 26;
+      const wx = x + (32 - width) / 2;
+      const wy = y + (residential ? 6 : 4);
+      const height = residential ? 18 : 24;
+      body.fillStyle = residential ? '#827970' : '#40555b';
+      body.fillRect(wx - 2, wy - 2, width + 4, height + 4);
+      body.fillStyle = '#10191e';
+      body.fillRect(wx, wy, width, height);
+      if (rng() < (residential ? 0.33 : 0.48)) {
+        lit.fillStyle = residential ? (rng() > 0.24 ? '#e59b54' : '#b3bbcc') : '#8bc4bf';
+        lit.fillRect(wx + 1, wy + 1, width - 2, height - 2);
+        lit.clearRect(wx + (width >> 1), wy + 1, 1, height - 2);
+        if (residential) {
+          lit.fillStyle = '#3e302c';
+          lit.fillRect(wx + 1, wy + 2, width - 2, 2 + rng() * 11);
+        }
+      }
+    }
+  }
+  for (const t of [map, emissiveMap]) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return new THREE.MeshStandardMaterial({
+    map, emissiveMap, emissive: 0xffffff, emissiveIntensity: residential ? 0.74 : 0.58,
+    roughness: residential ? 0.86 : 0.39, metalness: residential ? 0.04 : 0.42,
+  });
 }
 
 /** Signage in an invented script, so no real brand or language is implied. */
@@ -184,6 +233,8 @@ function glowSprite(): THREE.CanvasTexture {
 
 export interface Shared {
   windows: THREE.MeshStandardMaterial[];
+  market: THREE.MeshStandardMaterial;
+  apartments: THREE.MeshStandardMaterial;
   neon: THREE.MeshBasicMaterial;
   signs: { mat: THREE.MeshBasicMaterial; vertical: boolean; color: number }[];
   ground: THREE.MeshStandardMaterial;
@@ -229,6 +280,7 @@ export function createShared(): Shared {
   });
   return {
     windows, signs, ground, spire, sprite: glowSprite(),
+    market: frontageMaterial(false), apartments: frontageMaterial(true),
     neon: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
   };
 }
@@ -275,6 +327,7 @@ export interface Structure {
   rise: number;
   p: number;
   done: boolean;
+  featured?: 'market' | 'apartments';
   trees: [number, number]; // range in the tree instance buffer
 }
 
@@ -290,29 +343,30 @@ export interface District {
   dispose: () => void;
 }
 
-function buildTower(sections: Section[], rng: () => number, shared: Shared, bodyMat: THREE.Material, accent: THREE.Color, intent: Intent, isSpire: boolean) {
+function buildTower(sections: Section[], rng: () => number, shared: Shared, bodyMat: THREE.Material, accent: THREE.Color, intent: Intent, isSpire: boolean, detailedFrontage = false) {
   const body: THREE.BufferGeometry[] = [], neon: THREE.BufferGeometry[] = [], edges: THREE.BufferGeometry[] = [];
   const uo = Math.floor(rng() * COLS) / COLS, vo = Math.floor(rng() * ROWS) / ROWS;
-  const bright = accent.clone().multiplyScalar(1.9);
+  const bright = accent.clone().multiplyScalar(detailedFrontage ? 0.72 : 1.9);
   const group = new THREE.Group();
   sections.forEach((s, i) => {
     body.push(windowBox(s.w, s.h, s.d, s.cx, s.y0, s.cz, uo, vo));
     edges.push(new THREE.EdgesGeometry(new THREE.BoxGeometry(s.w, s.h, s.d)).translate(s.cx, s.y0 + s.h / 2, s.cz));
     const top = s.y0 + s.h;
+    const trim = detailedFrontage ? 0.17 : 0.9;
     // A lit parapet around the top of each setback.
     if (isSpire || rng() < 0.8 || i === sections.length - 1) {
-      neon.push(colorBox(s.w + 0.6, 0.9, 0.5, s.cx, top, s.cz + s.d / 2, bright), colorBox(s.w + 0.6, 0.9, 0.5, s.cx, top, s.cz - s.d / 2, bright));
-      neon.push(colorBox(0.5, 0.9, s.d + 0.6, s.cx + s.w / 2, top, s.cz, bright), colorBox(0.5, 0.9, s.d + 0.6, s.cx - s.w / 2, top, s.cz, bright));
+      neon.push(colorBox(s.w + 0.6, trim, 0.5, s.cx, top, s.cz + s.d / 2, bright), colorBox(s.w + 0.6, trim, 0.5, s.cx, top, s.cz - s.d / 2, bright));
+      neon.push(colorBox(0.5, trim, s.d + 0.6, s.cx + s.w / 2, top, s.cz, bright), colorBox(0.5, trim, s.d + 0.6, s.cx - s.w / 2, top, s.cz, bright));
     }
     // Vertical light seams on some corners.
-    if (isSpire || rng() < 0.3) {
+    if (isSpire || (rng() < 0.3 && !detailedFrontage)) {
       for (const [sx, sz] of [[1, 1], [-1, -1]]) neon.push(colorBox(0.4, s.h, 0.4, s.cx + (sx * s.w) / 2, s.y0 + s.h / 2, s.cz + (sz * s.d) / 2, bright));
     }
   });
   const base = sections[0], last = sections[sections.length - 1];
   // Street-level shopfront band.
   const shop = new THREE.Color([MAGENTA, AMBER, CYAN, GREEN][Math.floor(rng() * 4)]).multiplyScalar(1.5);
-  neon.push(colorBox(base.w + 0.4, 0.5, base.d + 0.4, base.cx, 5.2, base.cz, shop));
+  if (!detailedFrontage) neon.push(colorBox(base.w + 0.4, 0.5, base.d + 0.4, base.cx, 5.2, base.cz, shop));
   // Antenna.
   let height = last.y0 + last.h;
   if (rng() < 0.6 || isSpire) {
@@ -326,7 +380,7 @@ function buildTower(sections: Section[], rng: () => number, shared: Shared, body
   group.add(bodyMesh, neonMesh);
 
   // Signs.
-  const count = isSpire ? 0 : Math.floor(rng() * 4.6 * intent.signs);
+  const count = isSpire || detailedFrontage ? 0 : Math.floor(rng() * 4.6 * intent.signs);
   for (let i = 0; i < count; i++) {
     const s = shared.signs[Math.floor(rng() * shared.signs.length)];
     const sec = rng() < 0.6 ? base : sections[Math.floor(rng() * sections.length)];
@@ -363,6 +417,7 @@ export function generateDistrict(seed: number, intentKey: IntentKey, shared: Sha
   const intent = INTENTS[intentKey];
   const root = new THREE.Group();
   const structures: Structure[] = [];
+  const streetCorner = createStreetCorner();
   const mid = (BLOCKS - 1) / 2;
   const maxDist = Math.hypot(mid, mid) * PITCH;
   const treeMats: THREE.Matrix4[] = [];
@@ -373,11 +428,15 @@ export function generateDistrict(seed: number, intentKey: IntentKey, shared: Sha
     for (let bx = 0; bx < BLOCKS; bx++) {
       if (bx === mid && bz === mid) continue; // the Architect's plaza
       const cx = ORIGIN + (bx + 0.5) * PITCH, cz = ORIGIN + (bz + 0.5) * PITCH;
+      const detailedFrontage = bx === STREET_CORNER.blockX && bz === STREET_CORNER.blockZ;
       const inner = BLOCK - 8; // pavement all round
       // Carve the block into 1, 2 or 4 lots.
       const roll = rng();
       const lots: [number, number, number, number][] = [];
-      if (roll < 0.22) lots.push([cx, cz, inner, inner]);
+      if (detailedFrontage) {
+        lots.push([cx - 14, cz + 8, 25, 40], [cx + 14, cz + 8, 25, 40]);
+        streetCorner.pavement(root, cx, cz);
+      } else if (roll < 0.22) lots.push([cx, cz, inner, inner]);
       else if (roll < 0.58) {
         const alongX = rng() < 0.5, split = 0.38 + rng() * 0.24;
         const a = inner * split - 2, b = inner * (1 - split) - 2;
@@ -393,7 +452,7 @@ export function generateDistrict(seed: number, intentKey: IntentKey, shared: Sha
         const base: Omit<Structure, 'group' | 'holo' | 'height' | 'trees'> = {
           x: lx, z: lz, radius: Math.max(lw, ld) / 2, dist, color: accent, start: 0, rise: 0, p: 0, done: false,
         };
-        if (rng() < intent.park) {
+        if (rng() < intent.park && !detailedFrontage) {
           const first = treeMats.length;
           const n = Math.round((lw * ld) / 55);
           for (let i = 0; i < n; i++) {
@@ -409,20 +468,27 @@ export function generateDistrict(seed: number, intentKey: IntentKey, shared: Sha
         const fall = 1.2 - 0.62 * (dist / maxDist);
         let H = (55 + rng() * 130) * fall * intent.height;
         if (rng() < 0.08) H *= 1.55;
-        const count = 1 + Math.floor(rng() * 3.6);
+        const featured = detailedFrontage ? (lx > cx ? 'market' : 'apartments') : undefined;
+        if (featured) H = (featured === 'market' ? 37 : 110) * intent.height;
+        const randomFloors = 1 + Math.floor(rng() * 3.6);
+        const count = featured ? 3 : randomFloors;
         const sections: Section[] = [];
         let w = lw, d = ld, sx = lx, sz = lz, y0 = 0;
         for (let i = 0; i < count; i++) {
-          const h = i === count - 1 ? H - y0 : (H - y0) * (0.3 + rng() * 0.35);
+          const h = i === count - 1 ? H - y0
+            : i === 0 && featured ? (featured === 'market' ? 16 : 47)
+            : (H - y0) * (0.3 + rng() * 0.35);
           sections.push({ w, d, cx: sx, cz: sz, y0, h });
           y0 += h;
           const nw = w * (0.68 + rng() * 0.2), nd = d * (0.68 + rng() * 0.2);
           sx += (rng() - 0.5) * (w - nw); sz += (rng() - 0.5) * (d - nd);
           w = nw; d = nd;
         }
-        const mat = shared.windows[intent.windows[Math.floor(rng() * intent.windows.length)]];
-        const t = buildTower(sections, rng, shared, mat, accent, intent, false);
-        structures.push({ ...base, ...t, trees: [0, 0] });
+        const defaultMat = shared.windows[intent.windows[Math.floor(rng() * intent.windows.length)]];
+        const mat = featured ? shared[featured] : defaultMat;
+        const t = buildTower(sections, rng, shared, mat, accent, intent, false, detailedFrontage);
+        if (detailedFrontage) streetCorner.facade(t.group, lx, lz, lw, ld, lx > cx);
+        structures.push({ ...base, ...t, featured, trees: [0, 0] });
       }
     }
   }
@@ -468,7 +534,7 @@ export function generateDistrict(seed: number, intentKey: IntentKey, shared: Sha
         if (mesh.geometry) mesh.geometry.dispose();
         if (o instanceof THREE.LineSegments) (o.material as THREE.Material).dispose();
       });
-      decalMat.dispose(); treeMat.dispose();
+      decalMat.dispose(); treeMat.dispose(); streetCorner.dispose();
     },
   };
 }
