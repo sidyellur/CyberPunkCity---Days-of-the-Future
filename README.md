@@ -44,6 +44,14 @@ squad selected a tap moves or attacks.
   (`VITE_BOT_LOG=1 npm test` prints its minute-by-minute economy, useful when tuning).
 - `scripts/playtest.mjs` drives the built game in headless Chromium and saves screenshots.
 
+## Visual slice
+
+`slice.html` (source in `src/slice/`) is a look-and-feel test for where the game is heading: a 3D
+district raised by an AI "Architect", with every tower, sign and street generated in code. It has no
+gameplay. Brief the Architect (Dense, Balanced or Green), watch the district rise, orbit the skyline,
+or drop to street level and walk. Open it at `http://localhost:5173/slice.html` under `npm run dev`;
+`npm run single` also writes `dist/cyberpunk-city-skyline.html`.
+
 ## Not built yet
 
 Fog of war, sound, multiplayer and alliances, a rival that runs a real economy, more maps.
