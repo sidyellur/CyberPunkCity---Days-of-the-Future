@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { QUAY_STOPS, quayJourney } from './quayRide';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const LINE = {
@@ -251,7 +252,7 @@ export function createTransit() {
   }
 
   // The Quay Line and Orbital share an elevated outer transfer platform.
-  for (const x of [-285, 123, 282]) {
+  for (const { x } of QUAY_STOPS) {
     stationFrame.push([x, 15, QUAY_LINE.z + 5.8, 28, 0.52, 7.05]);
     stationFrame.push([x, 19.35, QUAY_LINE.z + 7, 27, 0.21, 4.7]);
     coolSignals.push([x, 19.23, QUAY_LINE.z + 9.38, 26, 0.14, 0.1]);
@@ -390,7 +391,7 @@ export function createTransit() {
   );
   root.add(spill);
 
-  function update(time: number, marketTime = time): void {
+  function update(time: number, marketTime = time, quayTime = time) {
     const phase = marketTime * 0.058 + Math.asin(12 / LINE.east);
     const x = LINE.east * Math.sin(phase);
     const direction = Math.cos(phase) >= 0 ? 1 : -1;
@@ -405,11 +406,14 @@ export function createTransit() {
     const z = crossCenter + crossReach * Math.sin(orbitalPhase);
     crossVehicle.position.set(CROSS_LINE.x, CROSS_LINE.cabinY, z);
     crossLights.rotation.y = Math.cos(orbitalPhase) >= 0 ? 0 : Math.PI;
+    return positionQuay(quayTime);
+  }
 
-    const quayPhase = time * 0.058 + Math.asin(194 / LINE.east);
-    const quayX = LINE.east * Math.sin(quayPhase);
-    quayVehicle.position.set(quayX, QUAY_LINE.cabinY, QUAY_LINE.z);
-    quayLights.rotation.y = Math.cos(quayPhase) >= 0 ? 0 : Math.PI;
+  function positionQuay(time: number) {
+    const ride = quayJourney(time);
+    quayVehicle.position.set(ride.x, QUAY_LINE.cabinY, QUAY_LINE.z);
+    quayLights.rotation.y = ride.direction > 0 ? 0 : Math.PI;
+    return ride;
   }
   update(0);
 
@@ -417,6 +421,7 @@ export function createTransit() {
     root,
     update,
     colliders,
+    quayVehicle, positionQuay,
     dispose: () => {
       const geometry = new Set<THREE.BufferGeometry>();
       const surfaces = new Set<THREE.Material>();

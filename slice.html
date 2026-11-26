@@ -15,6 +15,13 @@
       <div id="status" aria-live="polite"></div>
       <div class="meter"><div id="meter-fill"></div></div>
     </header>
+    <section id="ride-panel" aria-label="Quay Line passenger display" hidden>
+      <div class="ride-heading"><span class="line-number">19</span><span>QUAY LINE</span><button id="ride-exit">Leave ride</button></div>
+      <div id="ride-station" role="status"></div>
+      <div id="ride-stops" aria-label="Stations from west to east"></div>
+      <p class="ride-look">Drag the window view to look around.</p>
+      <div class="ride-actions"><button id="ride-pause">Pause ride</button><button id="ride-next">Next stop</button><button id="ride-audio" aria-pressed="false">Cabin sound</button></div>
+    </section>
     <div id="hint"></div>
     <button id="walk-hold" hidden>Hold to walk</button>
     <footer>
@@ -29,6 +36,7 @@
           <button id="view-sky" class="on">Skyline</button>
           <button id="view-wide">Overview</button>
           <button id="view-street">Street</button>
+          <button id="view-ride">Ride the shuttle</button>
         </div>
       </div>
       <div class="group">
