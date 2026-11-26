@@ -12,6 +12,9 @@ import {
 } from './district07';
 import { STREET_CORNER } from './street';
 import { createTransit } from './transit';
+import { QUAY_STOPS, quayJourney } from './quayRide';
+import { createQuayAudio } from './quayAudio';
+import { createQuayCabin } from './quayCabin';
 import { createRetrofit } from './retrofit';
 import { createStreetLife } from './streetLife';
 import { createMarketDisplay } from './marketDisplay';
@@ -392,10 +395,86 @@ function boot(): void {
   controls.maxPolarAngle = Math.PI / 2 - 0.02;
   controls.update();
 
-  let walking = false;
   const walk = { yaw: 0, pitch: 0.28, x: 0, z: 0, hold: false };
   const keys = new Set<string>();
   const saved = { pos: new THREE.Vector3(), target: new THREE.Vector3() };
+  let walking = false;
+  let riding = false;
+  let quayTime = 0;
+  let ridePaused = reduced;
+  let cabin: THREE.Group | undefined;
+  let rideYaw = 0, ridePitch = 0;
+  let audio: ReturnType<typeof createQuayAudio> | undefined;
+  let streetSeatReturn: typeof walk | undefined;
+  const stopMarkers = QUAY_STOPS.map(stop => {
+    const marker = document.createElement('span');
+    marker.textContent = stop.name;
+    $('ride-stops').appendChild(marker);
+    return marker;
+  });
+  function seatCamera() {
+    camera.position.copy(transit.quayVehicle.position);
+    camera.position.x -= 3.92;
+    camera.position.y += 0.18;
+    camera.position.z += 0.32;
+    camera.rotation.set(ridePitch, rideYaw, 0, 'YXZ');
+  }
+  function updateQuay(journey = transit.positionQuay(quayTime)) {
+    if (!riding || !cabin) return;
+    cabin.position.copy(transit.quayVehicle.position);
+    seatCamera();
+    audio?.update(journey.speed, ridePaused || document.hidden);
+    const station = (journey.stopped ? 'At ' : 'Next · ') + QUAY_STOPS[journey.stopped ? journey.from : journey.to].name;
+    if ($('ride-station').textContent !== station) {
+      if (journey.stopped && !ridePaused && !document.hidden) audio?.chime();
+      $('ride-station').textContent = station;
+      stopMarkers.forEach((marker, i) => {
+        marker.classList.toggle('here', journey.stopped && i === journey.from);
+        marker.classList.toggle('next', i === journey.to);
+      });
+    }
+  }
+  function boardRide() {
+    if (riding) return;
+    streetSeatReturn = walking ? { ...walk, hold: false } : undefined;
+    if (walking) setView(false);
+    saved.pos.copy(camera.position); saved.target.copy(controls.target);
+    riding = true;
+    controls.enabled = false;
+    if (!cabin) { cabin = createQuayCabin(); scene.add(cabin); }
+    cabin.visible = true;
+    transit.quayVehicle.visible = false;
+    quayTime = 0;
+    ridePaused = reduced;
+    rideYaw = 0.30; ridePitch = 0.23;
+    camera.near = 0.08; camera.fov = 80; camera.updateProjectionMatrix();
+    $('ui').classList.add('riding');
+    $('ride-panel').hidden = false;
+    $('ride-station').textContent = '';
+    $('ride-pause').textContent = ridePaused ? 'Resume ride' : 'Pause ride';
+    $('ride-exit').focus();
+    updateQuay();
+  }
+  function leaveRide() {
+    if (!riding) return;
+    riding = false;
+    stopCabinAudio();
+    cabin!.visible = false;
+    transit.quayVehicle.visible = true;
+    camera.near = 0.5; camera.fov = skylineFov; camera.updateProjectionMatrix();
+    camera.position.copy(saved.pos); controls.target.copy(saved.target);
+    controls.enabled = true;
+    controls.update();
+    $('ui').classList.remove('riding');
+    $('ride-panel').hidden = true;
+    if (streetSeatReturn) {
+      setView(true);
+      Object.assign(walk, streetSeatReturn);
+      stepWalk(0);
+    } else hint();
+    $('view-ride').focus();
+  }
+
 
   /** True where a person cannot stand: inside a block's lots, or inside the spire. */
   function blocked(x: number, z: number): boolean {
@@ -412,6 +491,7 @@ function boot(): void {
   }
 
   function setView(street: boolean): void {
+    if (riding) leaveRide();
     if (street === walking) return;
     walking = street;
     $('view-sky').classList.toggle('on', !street);
@@ -453,12 +533,18 @@ function boot(): void {
   let drag: { id: number; x: number; y: number } | null = null;
   canvas.addEventListener('pointerdown', e => {
     if (e.pointerType === 'touch' && !touch) { touch = true; hint(); }
-    if (!walking) return;
+    if (!walking && !riding) return;
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', e => {
-    if (!walking || !drag || drag.id !== e.pointerId) return;
+    if ((!walking && !riding) || !drag || drag.id !== e.pointerId) return;
+    if (riding) {
+      rideYaw = THREE.MathUtils.clamp(rideYaw - (e.clientX - drag.x) * 0.0042, -1.23, 1.23);
+      ridePitch = THREE.MathUtils.clamp(ridePitch - (e.clientY - drag.y) * 0.0042, -0.42, 1.12);
+      drag.x = e.clientX; drag.y = e.clientY;
+      return;
+    }
     walk.yaw -= (e.clientX - drag.x) * 0.0042;
     walk.pitch = Math.max(-0.6, Math.min(1.35, walk.pitch - (e.clientY - drag.y) * 0.0042));
     drag.x = e.clientX; drag.y = e.clientY;
@@ -516,6 +602,47 @@ function boot(): void {
     hint();
   }
 
+  function stopCabinAudio() {
+    if (audio) void audio.close().catch(() => {});
+    audio = undefined;
+    $('ride-audio').setAttribute('aria-pressed', 'false');
+  }
+  $('ride-audio').addEventListener('click', async () => {
+    if (audio) { stopCabinAudio(); return; }
+    let sound: ReturnType<typeof createQuayAudio> | undefined;
+    try {
+      sound = createQuayAudio();
+      audio = sound;
+      await sound.resume();
+      if (audio !== sound) return;
+      $('ride-audio').setAttribute('aria-pressed', 'true');
+      if (!ridePaused) sound.chime();
+    } catch {
+      if (sound === audio) stopCabinAudio();
+    }
+  });
+  if (typeof AudioContext === 'undefined') $('ride-audio').hidden = true;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) audio?.update(0, true);
+  });
+  $('view-ride').addEventListener('click', boardRide);
+  $('ride-exit').addEventListener('click', leaveRide);
+  $('ride-pause').addEventListener('click', () => {
+    ridePaused = !ridePaused;
+    $('ride-pause').textContent = ridePaused ? 'Resume ride' : 'Pause ride';
+  });
+  $('ride-next').addEventListener('click', () => {
+    quayTime = quayJourney(quayTime).nextArrival + 0.001;
+    updateQuay();
+  });
+  addEventListener('keydown', e => {
+    if (!riding) return;
+    if (e.key === 'Escape') leaveRide();
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      rideYaw = THREE.MathUtils.clamp(rideYaw + (e.key === 'ArrowLeft' ? 0.08 : -0.08), -1.23, 1.23);
+    }
+  });
   $('view-sky').addEventListener('click', () => frameSkyline(false));
   $('view-wide').addEventListener('click', () => frameSkyline(true));
   $('view-street').addEventListener('click', () => setView(true));
@@ -538,7 +665,8 @@ function boot(): void {
   let last = performance.now();
   const tmp = new THREE.Vector3();
   function frame(now: number): void {
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const elapsed = (now - last) / 1000;
+    const dt = Math.min(0.05, elapsed);
     last = now;
     const t = now / 1000;
     if (canvas.width !== Math.round(canvas.clientWidth * renderer.getPixelRatio())) resize();
@@ -593,15 +721,16 @@ function boot(): void {
     shared.signs[3].mat.opacity = Math.sin(t * 31) > 0.82 || Math.sin(t * 7.3) > 0.93 ? 0.25 : 1;
     shared.signs[8].mat.opacity = Math.sin(t * 23 + 1) > 0.9 ? 0.4 : 1;
 
+    if (!document.hidden && (riding ? !ridePaused : !reduced)) quayTime += Math.min(elapsed, 0.5);
     if (!reduced) {
       if (streetEntered) cornerTime += dt;
       const motionTime = Math.max(0, cornerTime - 1.6);
-      transit.update(t, motionTime);
+      updateQuay(transit.update(t, motionTime, quayTime));
       canal.update(t);
       tether.update(t);
       if (streetEntered) for (const feature of cornerFeatures) feature.update(motionTime);
-    }
-    if (walking) stepWalk(dt); else controls.update();
+    } else if (riding) updateQuay();
+    if (walking) stepWalk(dt); else if (!riding) controls.update();
 
     // Rain.
     if (rain.visible) {
