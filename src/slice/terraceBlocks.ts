@@ -1,3 +1,4 @@
+import { clad } from './cladding';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
@@ -12,7 +13,7 @@ export function createTerraceBlock(seed: number, height: number) {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
     return state / 4294967296;
   }
-  const shell = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.12 });
+  const shell = clad(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, metalness: 0.1 }));
   const glazing = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
   const batches = new Map<THREE.Material, THREE.BufferGeometry[]>([[shell, []], [glazing, []]]);
   const box = new THREE.BoxGeometry();
@@ -101,6 +102,13 @@ export function createTerraceBlock(seed: number, height: number) {
       for (let bay = -1; bay <= 1; bay++) {
         place(glazing, windowEnd, pick(random() < 0.42 ? occupied : night), endX, floor + 3.5,
           bodyZ + bay * bodyD * 0.19, 0.16, 3.4, bodyD * 0.14);
+      }
+      // The slab extends beyond the apartments to form an accessible balcony.
+      const railZ = z + side * (terraceDepth / 2 - 0.45);
+      const railWidth = terraceWidth * 0.72;
+      place(shell, unit, 0x546565, x, floor + 1.85, railZ, railWidth, 0.22, 0.26);
+      for (let post = 0; post <= 4; post++) {
+        place(shell, unit, 0x4c5959, x + (post / 4 - 0.5) * railWidth, floor + 1.14, railZ, 0.2, 1.4, 0.2);
       }
       const gardenZ = z + side * (terraceDepth / 2 - 2.3);
       const gardenX = x + (i % 2 ? 1 : -1) * terraceWidth * 0.17;
