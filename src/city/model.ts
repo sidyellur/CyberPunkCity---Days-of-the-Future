@@ -84,6 +84,66 @@ export interface Rates {
   defence: number;
 }
 
+// ---------- Governance state (the rules live in governance.ts) ----------
+
+export type GroupKey = 'labour' | 'enterprise' | 'commons';
+export type PolicyKey = 'wealth' | 'oversight' | 'housing' | 'hours';
+
+/** A decision waiting for the player: an initiative from the Architect, or a city event. */
+export interface Pending {
+  id: string;
+  kind: 'initiative' | 'event';
+  /** Seconds until it resolves by itself (the Architect acts, or the moment passes). */
+  t: number;
+  total: number;
+  /** For choices that concern one district. */
+  site: number;
+}
+
+export interface GovState {
+  /** 0 Advisory, 1 Supervised, 2 Delegated, 3 Sovereign. */
+  autonomy: number;
+  trust: number;
+  /** Option index chosen for each policy. */
+  policies: Record<PolicyKey, number>;
+  /** Seconds before each policy can be changed again. */
+  cooldown: Record<PolicyKey, number>;
+  groups: Record<GroupKey, { share: number; sat: number }>;
+  enacted: string[];
+  refused: string[];
+  pending: Pending | null;
+  nextInitiative: number;
+  nextEvent: number;
+  strike: { group: GroupKey; t: number } | null;
+  /** Lingering resentment from troubling decisions; fades over time. */
+  grievance: number;
+  /** Timed effects from event choices. */
+  boosts: { id: string; t: number }[];
+  decisions: number;
+  rng: number;
+}
+
+/** Everything governance changes about how the city runs, as plain multipliers and offsets. */
+export interface Mods {
+  out: Res;
+  jobs: number;
+  housing: number;
+  draw: number;
+  morale: number;
+  growth: number;
+  build: number;
+}
+
+export const neutralMods = (): Mods => ({ out: { credits: 1, alloy: 1, food: 1, data: 1 }, jobs: 1, housing: 1, draw: 1, morale: 0, growth: 1, build: 1 });
+export const defaultGov = (seed: number): GovState => ({
+  autonomy: 0, trust: 60,
+  policies: { wealth: 1, oversight: 1, housing: 1, hours: 1 },
+  cooldown: { wealth: 0, oversight: 0, housing: 0, hours: 0 },
+  groups: { labour: { share: 0.34, sat: 60 }, enterprise: { share: 0.33, sat: 60 }, commons: { share: 0.33, sat: 60 } },
+  enacted: [], refused: [], pending: null, nextInitiative: 240, nextEvent: 200, strike: null, grievance: 0, boosts: [], decisions: 0,
+  rng: seed * 7919 + 13,
+});
+
 export interface CityState {
   version: 1;
   seed: number;
@@ -98,6 +158,8 @@ export interface CityState {
   rates: Rates;
   objectives: number;
   events: { msg: string; kind: 'info' | 'warn' | 'good' }[];
+  gov: GovState;
+  mods: Mods;
 }
 
 export function createCity(seed = 1): CityState {
@@ -110,7 +172,7 @@ export function createCity(seed = 1): CityState {
       income: { credits: 0, alloy: 0, food: 0, data: 0 }, powerSupply: 0, powerDemand: 0, powerRatio: 1,
       housing: 0, jobs: 0, workers: 0, employed: 0, moraleTarget: 60, starving: false, defence: 0,
     },
-    objectives: 0, events: [],
+    objectives: 0, events: [], gov: defaultGov(seed), mods: neutralMods(),
   };
   recompute(s);
   return s;
@@ -130,7 +192,7 @@ export function neighbours(i: number): number[] {
 export function canAfford(s: CityState, cost: Cost): boolean {
   return (Object.keys(cost) as ResKey[]).every(k => s.res[k] >= (cost[k] ?? 0));
 }
-function pay(s: CityState, cost: Cost): void {
+export function pay(s: CityState, cost: Cost): void {
   for (const k of Object.keys(cost) as ResKey[]) s.res[k] -= cost[k] ?? 0;
 }
 const round5 = (n: number) => Math.round(n / 5) * 5;
@@ -143,7 +205,7 @@ export function briefCost(intent: Intent, character: Character, level: number): 
 }
 export const briefTime = (intent: Intent, level: number) => Math.round(INTENTS[intent].time * Math.pow(1.4, level - 1));
 
-function emit(s: CityState, msg: string, kind: 'info' | 'warn' | 'good' = 'info'): void {
+export function emit(s: CityState, msg: string, kind: 'info' | 'warn' | 'good' = 'info'): void {
   s.events.push({ msg, kind });
   if (s.events.length > 12) s.events.shift();
 }
@@ -192,7 +254,10 @@ const SPIRE = { housing: 40, power: 24, credits: 2, alloy: 1.2 };
 
 /** Derive rates from the current districts. Safe to call at any time. */
 export function recompute(s: CityState): void {
-  const r = s.rates;
+  // Saves from before governance existed.
+  s.gov ??= defaultGov(s.seed);
+  s.mods ??= neutralMods();
+  const r = s.rates, mods = s.mods;
   const live: { i: number; d: District; st: ReturnType<typeof districtStats> }[] = [];
   s.districts.forEach((d, i) => {
     if (!d) return;
@@ -207,10 +272,11 @@ export function recompute(s: CityState): void {
   for (const intent of STAFF_ORDER) {
     for (const l of live) {
       if (l.d.intent !== intent) continue;
-      const take = Math.min(l.st.jobs, free);
-      l.d.staffing = l.st.jobs ? take / l.st.jobs : 1;
+      const jobs = Math.round(l.st.jobs * mods.jobs);
+      const take = Math.min(jobs, free);
+      l.d.staffing = jobs ? take / jobs : 1;
       free -= take;
-      r.jobs += l.st.jobs;
+      r.jobs += jobs;
     }
   }
   for (const l of live) if (!INTENTS[l.d.intent].jobs) l.d.staffing = 1;
@@ -221,8 +287,8 @@ export function recompute(s: CityState): void {
   r.defence = 0;
   for (const l of live) {
     const intact = 1 - l.d.damage;
-    if (l.st.power > 0) supply += l.st.power * l.d.staffing * intact; else demand -= l.st.power;
-    housing += l.st.housing * intact;
+    if (l.st.power > 0) supply += l.st.power * l.d.staffing * intact; else demand -= l.st.power * mods.draw;
+    housing += l.st.housing * intact * mods.housing;
     r.defence += l.st.defence * l.d.staffing * intact;
   }
   r.powerSupply = supply; r.powerDemand = demand;
@@ -237,14 +303,14 @@ export function recompute(s: CityState): void {
     adj += a.morale;
     moraleTerms += l.st.morale;
     for (const k of Object.keys(l.st.out) as ResKey[]) {
-      inc[k] += (l.st.out[k] ?? 0) * l.d.staffing * (l.st.power < 0 ? r.powerRatio : 1) * moraleMult * a.outMult * (1 - l.d.damage);
+      inc[k] += (l.st.out[k] ?? 0) * l.d.staffing * (l.st.power < 0 ? r.powerRatio : 1) * moraleMult * a.outMult * (1 - l.d.damage) * mods.out[k];
     }
   }
   inc.food -= s.citizens * 0.02;
   r.income = inc;
   r.starving = s.res.food <= 0 && inc.food < 0;
 
-  let target = 60 + Math.max(-30, Math.min(30, moraleTerms + adj / 2));
+  let target = 60 + Math.max(-30, Math.min(30, moraleTerms + adj / 2)) + mods.morale;
   if (r.starving) target -= 30;
   target -= 30 * (1 - r.powerRatio);
   if (s.citizens > r.housing) target -= 15;
@@ -260,8 +326,10 @@ export const OBJECTIVES: { text: string; done: (s: CityState) => boolean }[] = [
   { text: 'Grow the city to 150 citizens', done: s => s.citizens >= 150 },
   { text: 'Upgrade the Architect to level 2', done: s => s.architect >= 2 },
   { text: 'Grow a district to level 2', done: s => s.districts.some(d => d && d.standing >= 2) },
+  { text: 'Govern: change a policy or the Architect\'s autonomy', done: s => s.gov.decisions > 0 },
   { text: 'Reach 500 citizens across 14 districts', done: s => s.citizens >= 500 && s.districts.filter(d => d && d.standing).length >= 14 },
   { text: 'Upgrade the Architect to level 4 and reach 1,500 citizens', done: s => s.architect >= 4 && s.citizens >= 1500 },
+  { text: 'Hold trust above 65 in a city of 2,000', done: s => s.gov.trust >= 65 && s.citizens >= 2000 },
 ];
 function standing(s: CityState, intent: Intent): number {
   return s.districts.filter(d => d && d.intent === intent && d.standing > 0).length;
@@ -274,7 +342,7 @@ export function step(s: CityState, dt: number = DT): void {
     if (!d) continue;
     if (d.damage > 0) d.damage = Math.max(0, d.damage - REPAIR_RATE * dt);
     if (d.build <= 0) continue;
-    d.build = Math.max(0, d.build - dt);
+    d.build = Math.max(0, d.build - dt * s.mods.build);
     if (d.build === 0) {
       d.standing = d.level;
       emit(s, d.level === 1 ? `${INTENTS[d.intent].name} district complete` : `${INTENTS[d.intent].name} district grown to level ${d.level}`, 'good');
@@ -292,7 +360,7 @@ export function step(s: CityState, dt: number = DT): void {
   s.morale += Math.max(-drift, Math.min(drift, r.moraleTarget - s.morale));
 
   if (!r.starving && s.morale >= 35 && s.citizens < r.housing) {
-    s.citizens = Math.min(r.housing, s.citizens + (0.5 + s.citizens * 0.012) * (s.morale / 60) * dt);
+    s.citizens = Math.min(r.housing, s.citizens + (0.5 + s.citizens * 0.012) * (s.morale / 60) * s.mods.growth * dt);
   } else if ((r.starving || s.morale < 20) && s.citizens > 10) {
     s.citizens = Math.max(10, s.citizens * (1 - 0.006 * dt));
   }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createCity, step, brief, grow, clearSite, upgradeArchitect, recompute, damageDistrict, adjacency, briefCost, CENTRE, DT, CityState, currentObjective,
+  createCity, step, brief, grow, clearSite, upgradeArchitect, recompute, damageDistrict, adjacency, briefCost, CENTRE, DT, CityState,
 } from '../src/city/model';
 import { advise, chooseSite } from '../src/city/architect';
 
@@ -136,7 +136,7 @@ describe('the Architect', () => {
       }
       console.log(name, {
         approved, citizens: Math.round(s.citizens), morale: Math.round(s.morale), lowest: Math.round(lowest), architect: s.architect,
-        districts: s.districts.filter(d => d).length, objective: currentObjective(s),
+        districts: s.districts.filter(d => d).length,
         res: Object.values(s.res).map(Math.round).join('/'), income: Object.values(s.rates.income).map(v => v.toFixed(1)).join('/'),
       });
       if (log.length) console.log(log.join('\n'));
@@ -144,7 +144,7 @@ describe('the Architect', () => {
       expect(lowest).toBeGreaterThan(40);
       expect(s.citizens).toBeGreaterThan(1500);
       expect(s.architect).toBe(4);
-      expect(currentObjective(s)).toBe(-1);
+      expect(s.objectives & 895).toBe(895); // everything except the two governance objectives
     });
   }
 });
