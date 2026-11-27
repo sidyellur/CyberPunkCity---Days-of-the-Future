@@ -16,6 +16,7 @@ import { createRetrofit } from './retrofit';
 import { createStreetLife } from './streetLife';
 import { createMarketDisplay } from './marketDisplay';
 import { createCanal, CANAL_COLUMN } from './canal';
+import { createStormSky } from './stormLight';
 import { createHorizon } from './horizon';
 import { createSkyTether } from './skyTether';
 import { createSkyLinks } from './skyLinks';
@@ -26,8 +27,8 @@ const $ = (id: string) => document.getElementById(id)!;
 const canvas = $('scene') as HTMLCanvasElement;
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const STREET_FOG = 0x24103f;
-const OVERVIEW_FOG = 0x3a4359;
-const OVERVIEW_FOG_DENSITY = 0.00104;
+const OVERVIEW_FOG = 0x626f77;
+const OVERVIEW_FOG_DENSITY = 0.00113;
 
 function boot(): void {
   let renderer: THREE.WebGLRenderer;
@@ -92,13 +93,23 @@ function boot(): void {
     }),
   );
   scene.add(sky);
+  const stormSky = createStormSky(haze.color);
+  scene.environment = stormSky;
 
   // ----- Light: mostly emissive surfaces, with two coloured washes for shape -----
   const ambient = new THREE.HemisphereLight(0x4b3a8c, 0x06070c, 0.9);
   scene.add(ambient);
   const wash1 = new THREE.DirectionalLight(0xff4d9d, 0.9); wash1.position.set(-1, 0.6, 0.4);
   const wash2 = new THREE.DirectionalLight(0x35c8ff, 0.7); wash2.position.set(0.8, 0.5, -1);
-  scene.add(wash1, wash2);
+  scene.add(wash1, wash2, wash1.target);
+  wash1.target.position.set(88, 56, 204);
+  wash1.castShadow = !small;
+  wash1.shadow.mapSize.set(2048, 2048);
+  Object.assign(wash1.shadow.camera, { left: -218, right: 218, top: 225, bottom: -190, near: 15, far: 1000 });
+  wash1.shadow.camera.updateProjectionMatrix();
+  wash1.shadow.normalBias = 0.19;
+  wash1.shadow.bias = -0.00018;
+  wash1.shadow.autoUpdate = false;
 
   const shared = createShared();
   const rng = mulberry(4242);
@@ -248,25 +259,34 @@ function boot(): void {
   }
 
   // ----- Post-processing -----
-  const composer = new EffectComposer(renderer);
+  const target = new THREE.WebGLRenderTarget(1, 1, {
+    type: THREE.HalfFloatType, samples: small ? 0 : Math.min(2, renderer.capabilities.maxSamples),
+  });
+  const composer = new EffectComposer(renderer, target);
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.7, 0.72, 0.7);
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
 
   function setAtmosphere(street: boolean): void {
+    sky.visible = street;
+    scene.background = street ? null : stormSky;
+    scene.environmentIntensity = street ? 0.23 : 0.95;
     exchangeLights.visible = !street;
     trafficLights.size = street ? 6 : 2.2;
     trafficLights.opacity = street ? 1 : 0.66;
     renderer.toneMappingExposure = street ? 1.15 : 1.23;
-    ambient.color.setHex(street ? 0x4b3a8c : 0xb4c4df);
-    ambient.groundColor.setHex(street ? 0x06070c : 0x566273);
-    ambient.intensity = street ? 0.9 : 1.06;
-    wash1.color.setHex(street ? 0xff4d9d : 0xffdbc4);
-    wash1.position.set(-1, street ? 0.6 : 0.85, street ? 0.4 : 0.9);
-    wash1.intensity = street ? 0.9 : 1.45;
+    ambient.color.setHex(street ? 0x4b3a8c : 0xb9d5dd);
+    ambient.groundColor.setHex(street ? 0x06070c : 0x293239);
+    ambient.intensity = street ? 0.9 : 0.66;
+    wash1.color.setHex(street ? 0xff4d9d : 0xffcf9f);
+    wash1.position.copy(wash1.target.position);
+    if (street) wash1.position.add(new THREE.Vector3(-400, 240, 160));
+    else wash1.position.add(new THREE.Vector3(-540, 275, 72));
+    wash1.shadow.needsUpdate = true;
+    wash1.intensity = street ? 0.9 : 2.95;
     wash2.color.setHex(street ? 0x35c8ff : 0x9ccce6);
-    wash2.intensity = street ? 0.7 : 0.82;
+    wash2.intensity = street ? 0.7 : 0.67;
     haze.color.setHex(street ? STREET_FOG : OVERVIEW_FOG);
     haze.density = street ? 0.0015 : OVERVIEW_FOG_DENSITY;
     sky.material.uniforms.low.value.setHex(street ? 0x7a2f6a : 0x68677b);
@@ -310,6 +330,18 @@ function boot(): void {
       if (building.group && building.roof) rooftops.attach(building.group, building.roof, seed + index * 31);
     });
     schedule(district, Math.floor(district.structures.length * prebuiltShare));
+    if (!small) {
+      for (const s of [...district.structures, district.spire]) {
+        if (Math.abs(s.x - 88) > 300 || Math.abs(s.z - 204) > 300) continue;
+        s.group?.traverse(o => {
+          if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial && !o.material.transparent) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+      }
+      wash1.shadow.needsUpdate = true;
+    }
     scene.add(district.root);
     clock = 0;
     finished = false;
@@ -369,6 +401,7 @@ function boot(): void {
     gallery.visible = galleryAnchors.every(s => s.done);
     const total = district.structures.length;
     const done = built === total && district.spire.done;
+    if (!small && (done || Math.floor(clock * 4) !== Math.floor((clock - dt) * 4))) wash1.shadow.needsUpdate = true;
     ($('meter-fill') as HTMLElement).style.width = `${(built / total) * 100}%`;
     if (done && !finished) {
       finished = true;

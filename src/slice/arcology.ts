@@ -1,3 +1,4 @@
+import { clad } from './cladding';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
@@ -30,8 +31,8 @@ export function createArcology() {
     materials.push(material);
     return material;
   };
-  const ceramic = standard({ color: 0xd0a15f, emissive: 0x8a511c, emissiveIntensity: 0.30, roughness: 0.68 });
-  const pale = standard({ color: 0xe0bd87, emissive: 0x5f3a18, emissiveIntensity: 0.27, roughness: 0.68 });
+  const ceramic = standard({ color: 0xa9987d, emissive: 0x8a511c, emissiveIntensity: 0.09, roughness: 0.68 });
+  const pale = standard({ color: 0xcbbba0, emissive: 0x5f3a18, emissiveIntensity: 0.10, roughness: 0.68 });
   const shadow = standard({ color: 0x4f4135, emissive: 0x43291d, emissiveIntensity: 0.18, roughness: 0.78 });
   const copper = standard({ color: 0x935939, emissive: 0x75502c, emissiveIntensity: 0.22, roughness: 0.58, metalness: 0.45 });
   const verdigris = standard({ color: 0x517f71, emissive: 0x22554e, emissiveIntensity: 0.40, roughness: 0.63, metalness: 0.25 });
@@ -41,6 +42,8 @@ export function createArcology() {
   const jade = standard({ color: 0x3a6849, emissive: 0x183629, emissiveIntensity: 0.50, roughness: 0.93 });
   const foliage = standard({ color: 0x68875a, emissive: 0x2d4a23, emissiveIntensity: 0.38, roughness: 0.94 });
   const darkGlass = standard({ color: 0x2c3b40, emissive: 0x29413d, emissiveIntensity: 0.38, roughness: 0.28, metalness: 0.34 });
+
+  for (const facing of [ceramic, pale, shadow, copper, verdigris]) clad(facing);
 
   function add(material: THREE.Material, geometry: THREE.BufferGeometry): void {
     const batch = batches.get(material);
