@@ -223,7 +223,10 @@ export function createStage(canvas: HTMLCanvasElement, reducedMotion: boolean): 
   // Glow.
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(256, 256), 1.0, 0.85, 0.62));
+  // Glow is tuned per view: generous over the skyline, restrained at street level where lit
+  // surfaces fill the screen and would otherwise wash it out.
+  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 1.0, 0.85, 0.62);
+  composer.addPass(bloom);
   composer.addPass(new OutputPass());
 
   // Cameras.
@@ -319,9 +322,11 @@ export function createStage(canvas: HTMLCanvasElement, reducedMotion: boolean): 
         // An avenue beside the plaza, looking up at the spire.
         walk.x = ORIGIN + 4 * PITCH; walk.z = ORIGIN + 7 * PITCH - 6; walk.yaw = -0.2; walk.pitch = 0.45;
         camera.fov = 72;
+        bloom.strength = 0.38; bloom.threshold = 0.8; renderer.toneMappingExposure = 0.95;
       } else {
         camera.position.copy(saved.pos); controls.target.copy(saved.target);
         camera.fov = 50;
+        bloom.strength = 1.0; bloom.threshold = 0.62; renderer.toneMappingExposure = 1.15;
       }
       camera.updateProjectionMatrix();
       stage.onView(street);
