@@ -9,6 +9,10 @@ eras (#4). **Layers 1 to 3 are playable today**; eras are not built yet.
 
 ## Play
 
+**Play in your browser: https://sidyellur.github.io/CyberPunkCity---Days-of-the-Future/**
+
+That page is rebuilt from `main` on every push. To run it yourself:
+
 ```
 npm install
 npm run dev        # http://localhost:5173
